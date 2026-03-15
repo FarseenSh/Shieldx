@@ -1,0 +1,15 @@
+node_modules/
+frontend/node_modules/
+cache/
+artifacts/
+typechain-types/
+contracts/precompile/target/
+.env
+.env.local
+frontend/dist/
+frontend/build/
+coverage/
+coverage.json
+*.log
+.DS_Store
+Thumbs.db
