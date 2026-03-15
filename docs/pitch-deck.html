@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShieldX — Pitch Deck</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #020617; color: #fff; }
+
+  .slide {
+    min-height: 100vh; scroll-snap-align: start;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 4rem 2rem; text-align: center; position: relative;
+  }
+
+  .tag { font-size: 0.75rem; letter-spacing: 0.2em; text-transform: uppercase; color: #10b981; font-weight: 700; margin-bottom: 1.5rem; }
+  h1 { font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 800; line-height: 1.15; max-width: 900px; }
+  h2 { font-size: clamp(1.5rem, 4vw, 2.8rem); font-weight: 700; line-height: 1.2; max-width: 800px; }
+  .sub { font-size: clamp(1rem, 2vw, 1.25rem); color: #94a3b8; margin-top: 1.5rem; max-width: 600px; line-height: 1.6; }
+  .accent { color: #10b981; }
+  .red { color: #ef4444; }
+
+  .cards { display: flex; gap: 1.5rem; margin-top: 2.5rem; flex-wrap: wrap; justify-content: center; max-width: 900px; }
+  .card {
+    background: #0f172a; border: 1px solid #1e293b; border-radius: 12px;
+    padding: 2rem 1.5rem; flex: 1; min-width: 220px; max-width: 280px; text-align: center;
+  }
+  .card-icon { font-size: 2.5rem; margin-bottom: 1rem; }
+  .card h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem; }
+  .card p { font-size: 0.85rem; color: #64748b; line-height: 1.5; }
+
+  .stats { display: flex; gap: 2rem; margin-top: 2.5rem; flex-wrap: wrap; justify-content: center; }
+  .stat { text-align: center; }
+  .stat-val { font-size: 2.5rem; font-weight: 800; color: #10b981; font-family: 'Courier New', monospace; }
+  .stat-label { font-size: 0.8rem; color: #64748b; margin-top: 0.25rem; }
+
+  .flow { display: flex; align-items: center; gap: 1rem; margin-top: 2.5rem; flex-wrap: wrap; justify-content: center; }
+  .flow-step {
+    background: #0f172a; border: 1px solid #1e293b; border-radius: 12px;
+    padding: 1.5rem; text-align: center; min-width: 140px;
+  }
+  .flow-step .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+  .flow-step .label { font-size: 0.85rem; font-weight: 600; }
+  .flow-step .detail { font-size: 0.7rem; color: #64748b; margin-top: 0.25rem; }
+  .flow-arrow { font-size: 1.5rem; color: #334155; }
+
+  .comparison { display: flex; gap: 0; margin-top: 2.5rem; max-width: 700px; width: 100%; border-radius: 12px; overflow: hidden; }
+  .comp-side { flex: 1; padding: 2rem; }
+  .comp-left { background: rgba(127,29,29,0.15); border: 1px solid rgba(239,68,68,0.2); }
+  .comp-right { background: rgba(6,78,59,0.15); border: 1px solid rgba(16,185,129,0.2); }
+  .comp-title { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; }
+  .comp-item { font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.5rem; }
+  .comp-result { font-size: 1.2rem; font-weight: 800; margin-top: 1rem; }
+
+  .roadmap { display: flex; gap: 1.5rem; margin-top: 2.5rem; flex-wrap: wrap; justify-content: center; }
+  .rm-item { background: #0f172a; border: 1px solid #1e293b; border-radius: 12px; padding: 1.5rem; min-width: 180px; text-align: center; }
+  .rm-q { font-size: 0.75rem; color: #10b981; font-weight: 700; letter-spacing: 0.1em; }
+  .rm-title { font-size: 1rem; font-weight: 700; margin-top: 0.5rem; }
+  .rm-done { border-color: #10b981; }
+
+  .cta { display: inline-block; margin-top: 2rem; padding: 0.75rem 2rem; background: #10b981; color: #fff; border-radius: 8px; font-weight: 700; font-size: 1rem; text-decoration: none; }
+  .cta:hover { background: #059669; }
+
+  .divider { width: 60px; height: 3px; background: #10b981; border-radius: 2px; margin: 1.5rem auto; }
+
+  .slide-num { position: absolute; bottom: 2rem; right: 2rem; font-size: 0.75rem; color: #334155; }
+</style>
+</head>
+<body>
+
+<!-- Slide 1: Title -->
+<section class="slide">
+  <div class="tag">Polkadot Solidity Hackathon 2026 &mdash; Track 2: PVM Smart Contracts</div>
+  <h1><span class="accent">ShieldX</span></h1>
+  <div class="divider"></div>
+  <h2>The first MEV protection protocol on Polkadot</h2>
+  <p class="sub">Commit-reveal batch auctions eliminate sandwich attacks, front-running, and all ordering-based MEV extraction.</p>
+  <span class="slide-num">1 / 8</span>
+</section>
+
+<!-- Slide 2: Problem -->
+<section class="slide">
+  <div class="tag">The Problem</div>
+  <h2>MEV costs DeFi users <span class="red">$500M+</span> per year</h2>
+  <div class="comparison">
+    <div class="comp-side comp-left">
+      <div class="comp-title" style="color:#ef4444;">What Happens Today</div>
+      <div class="comp-item">1. User submits swap: 100 DOT &rarr; USDC</div>
+      <div class="comp-item">2. Attacker sees pending tx in mempool</div>
+      <div class="comp-item">3. Front-run pushes price up 3%</div>
+      <div class="comp-item">4. User gets 97 USDC instead of 100</div>
+      <div class="comp-result" style="color:#ef4444;">User loses $3.00 per trade</div>
+    </div>
+    <div class="comp-side comp-right">
+      <div class="comp-title" style="color:#10b981;">The Opportunity</div>
+      <div class="comp-item" style="margin-top:2rem;">As DeFi grows on Polkadot Hub, sandwich attacks will follow.</div>
+      <div class="comp-item" style="font-weight:700; color:#fff; margin-top:1rem;">Zero MEV protection infrastructure exists today.</div>
+      <div class="comp-result" style="color:#10b981;">ShieldX fixes this.</div>
+    </div>
+  </div>
+  <span class="slide-num">2 / 8</span>
+</section>
+
+<!-- Slide 3: Solution -->
+<section class="slide">
+  <div class="tag">The Solution</div>
+  <h2>Hidden orders. Fair prices. <span class="accent">Zero MEV.</span></h2>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="icon">&#x1F512;</div>
+      <div class="label">Commit</div>
+      <div class="detail">Hidden order + collateral</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="icon">&#x2696;&#xFE0F;</div>
+      <div class="label">Batch</div>
+      <div class="detail">Uniform clearing price</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="icon">&#x1F6E1;&#xFE0F;</div>
+      <div class="label">Save</div>
+      <div class="detail">$0 MEV extracted</div>
+    </div>
+  </div>
+  <p class="sub">All orders in a batch settle at the <strong style="color:#fff;">SAME</strong> uniform clearing price.<br>Sandwich attacks are <strong style="color:#10b981;">mathematically impossible.</strong></p>
+  <span class="slide-num">3 / 8</span>
+</section>
+
+<!-- Slide 4: Live Demo -->
+<section class="slide">
+  <div class="tag">Live Demo</div>
+  <h2>Sandwich attack: <span class="red">$3.00</span> &rarr; <span class="accent">$0.00</span></h2>
+  <div class="comparison" style="margin-top:2.5rem;">
+    <div class="comp-side comp-left">
+      <div class="comp-title" style="color:#ef4444;">&#x1F534; Normal DEX</div>
+      <div class="comp-item">Attacker: <span style="color:#10b981;">+$2.85</span></div>
+      <div class="comp-item">Victim: <span style="color:#ef4444; font-weight:700;">-$3.00</span></div>
+      <div class="comp-result" style="color:#ef4444;">MEV: $3.00</div>
+    </div>
+    <div class="comp-side comp-right">
+      <div class="comp-title" style="color:#10b981;">&#x1F7E2; ShieldX</div>
+      <div class="comp-item">Attacker: <span style="color:#64748b;">$0.00</span></div>
+      <div class="comp-item">Victim: <span style="color:#10b981; font-weight:700;">$0.00 loss</span></div>
+      <div class="comp-result" style="color:#10b981;">MEV: $0.00</div>
+    </div>
+  </div>
+  <p class="sub">Buying and selling at the <strong style="color:#fff;">same uniform price</strong> nets zero profit for the attacker.</p>
+  <span class="slide-num">4 / 8</span>
+</section>
+
+<!-- Slide 5: Architecture -->
+<section class="slide">
+  <div class="tag">Architecture</div>
+  <h2>Solidity + Rust PVM + XCM</h2>
+  <div class="flow" style="margin-top:2.5rem;">
+    <div class="flow-step">
+      <div class="icon">&#x1F464;</div>
+      <div class="label">User</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:#10b981;">
+      <div class="icon">&#x1F4DC;</div>
+      <div class="label">Router</div>
+      <div class="detail">Solidity</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:#f59e0b;">
+      <div class="icon">&#x2699;&#xFE0F;</div>
+      <div class="label">Engine</div>
+      <div class="detail">Rust PVM</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step" style="border-color:#8b5cf6;">
+      <div class="icon">&#x1F310;</div>
+      <div class="label">XCM</div>
+      <div class="detail">Cross-chain</div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="icon">&#x1F3E6;</div>
+      <div class="label">Parachains</div>
+      <div class="detail">Hydration / Bifrost</div>
+    </div>
+  </div>
+  <p class="sub">Commit-reveal in Solidity. Batch matching in Rust on PolkaVM. Cross-chain fills via XCM precompile.</p>
+  <span class="slide-num">5 / 8</span>
+</section>
+
+<!-- Slide 6: Why Polkadot -->
+<section class="slide">
+  <div class="tag">Why Only Polkadot</div>
+  <h2>Architecturally impossible on any other chain</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="card-icon">&#x2699;&#xFE0F;</div>
+      <h3>PolkaVM</h3>
+      <p>Native Rust computation for batch matching on RISC-V</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#x1F310;</div>
+      <h3>XCM</h3>
+      <p>Trustless cross-chain order routing without bridges</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#x1F512;</div>
+      <h3>Shared Security</h3>
+      <p>Cross-chain settlement backed by relay chain validators</p>
+    </div>
+    <div class="card">
+      <div class="card-icon">&#x1F4BB;</div>
+      <h3>Dual-VM</h3>
+      <p>Solidity interface + Rust engine in the same protocol</p>
+    </div>
+  </div>
+  <span class="slide-num">6 / 8</span>
+</section>
+
+<!-- Slide 7: Traction -->
+<section class="slide">
+  <div class="tag">Technical Depth</div>
+  <h2>Production-grade from day one</h2>
+  <div class="stats">
+    <div class="stat"><div class="stat-val">238</div><div class="stat-label">Tests Passing</div></div>
+    <div class="stat"><div class="stat-val">6</div><div class="stat-label">Smart Contracts</div></div>
+    <div class="stat"><div class="stat-val">6,600+</div><div class="stat-label">Lines of Code</div></div>
+    <div class="stat"><div class="stat-val">0.1%</div><div class="stat-label">Protocol Fee</div></div>
+  </div>
+  <p class="sub" style="margin-top:2rem;">OpenZeppelin AccessControl &amp; Pausable. Rust PVM engine with 38 independent tests. Playwright E2E coverage. SDK package ready for npm.</p>
+  <p class="sub" style="color:#64748b; font-size:0.85rem; margin-top:1rem;"><em>Prior art: No Sandwich Swap (3rd place, 2024 Polkadot Hackathon). ShieldX advances with commit-reveal hiding, on-chain Rust computation, and XCM cross-chain execution.</em></p>
+  <span class="slide-num">7 / 8</span>
+</section>
+
+<!-- Slide 8: Roadmap -->
+<section class="slide">
+  <div class="tag">Roadmap</div>
+  <h2>Infrastructure for the entire Polkadot DeFi ecosystem</h2>
+  <div class="roadmap">
+    <div class="rm-item rm-done">
+      <div class="rm-q">Q1 2026</div>
+      <div class="rm-title">Hackathon MVP &#x2705;</div>
+    </div>
+    <div class="rm-item">
+      <div class="rm-q">Q2 2026</div>
+      <div class="rm-title">Security Audit</div>
+    </div>
+    <div class="rm-item">
+      <div class="rm-q">Q3 2026</div>
+      <div class="rm-title">Mainnet + SDK</div>
+    </div>
+    <div class="rm-item">
+      <div class="rm-q">Q4 2026</div>
+      <div class="rm-title">Solver Network</div>
+    </div>
+  </div>
+  <div style="margin-top:3rem;">
+    <a class="cta" href="https://github.com/FarseenSh/Shieldx" target="_blank">GitHub &rarr; FarseenSh/Shieldx</a>
+  </div>
+  <p class="sub" style="margin-top:1.5rem; font-size:0.85rem; color:#475569;">ShieldX &mdash; Build Once. Shield Everywhere.</p>
+  <span class="slide-num">8 / 8</span>
+</section>
+
+</body>
+</html>

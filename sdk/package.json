@@ -1,0 +1,11 @@
+{
+  "name": "@shieldx/sdk",
+  "version": "0.1.0",
+  "description": "SDK for integrating ShieldX MEV protection into your DeFi protocol",
+  "main": "src/index.js",
+  "keywords": ["polkadot", "mev", "defi", "batch-auction", "xcm", "pvm", "shieldx"],
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.0.0"
+  }
+}
