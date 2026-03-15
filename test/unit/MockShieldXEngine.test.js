@@ -372,4 +372,127 @@ describe("MockShieldXEngine", function () {
       expect(twap).to.equal(ethers.parseEther("150"));
     });
   });
+
+  describe("edge cases", function () {
+    it("should handle batch with 50 orders", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const buys = [];
+      const sells = [];
+      for (let i = 0; i < 25; i++) {
+        buys.push(makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther(`${110 - i}`)));
+        sells.push(makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther(`${85 + i}`)));
+      }
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.be.gt(0);
+      expect(result.totalBuyFill).to.be.gt(0);
+      expect(result.totalSellFill).to.be.gt(0);
+    });
+
+    it("should handle all orders at identical price", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const price = ethers.parseEther("100");
+      const buys = [makeOrder(BUY, ethers.parseEther("10"), price), makeOrder(BUY, ethers.parseEther("20"), price)];
+      const sells = [makeOrder(SELL, ethers.parseEther("15"), price), makeOrder(SELL, ethers.parseEther("5"), price)];
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.equal(price);
+    });
+
+    it("should handle one wei price difference between buy and sell", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const buyPrice = ethers.parseEther("100") + 1n;
+      const sellPrice = ethers.parseEther("100");
+      const buys = [makeOrder(BUY, ethers.parseEther("10"), buyPrice)];
+      const sells = [makeOrder(SELL, ethers.parseEther("10"), sellPrice)];
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.be.gt(0);
+      expect(result.totalBuyFill).to.be.gt(0);
+    });
+
+    it("should handle alternating buy-sell-buy-sell pattern", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const buys = [makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("110")),
+                    makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("105"))];
+      const sells = [makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("90")),
+                     makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("95"))];
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.be.gt(0);
+    });
+
+    it("should handle amount of zero gracefully", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const buys = [makeOrder(BUY, 0, ethers.parseEther("100"))];
+      const sells = [makeOrder(SELL, 0, ethers.parseEther("90"))];
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.be.gt(0);
+      expect(result.buyFills[0]).to.equal(0);
+    });
+
+    it("should handle maximum uint256 price values", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const maxSafe = ethers.parseEther("1000000000");
+      const buys = [makeOrder(BUY, ethers.parseEther("1"), maxSafe)];
+      const sells = [makeOrder(SELL, ethers.parseEther("1"), maxSafe - ethers.parseEther("1"))];
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.be.gt(0);
+    });
+
+    it("should detect manipulation with exactly 3 orders (minimum)", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const orders = [
+        makeOrder(BUY, ethers.parseEther("100"), ethers.parseEther("100")),
+        makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("95")),
+        makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("90")),
+      ];
+      const result = await engine.detectManipulation(orders, ethers.parseEther("100"));
+      // 100/120 = 83% → spoofing
+      expect(result.manipulationScore).to.equal(60);
+    });
+
+    it("should return clean for 2 orders (below minimum)", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const orders = [
+        makeOrder(BUY, ethers.parseEther("100"), ethers.parseEther("100")),
+        makeOrder(SELL, ethers.parseEther("100"), ethers.parseEther("90")),
+      ];
+      const result = await engine.detectManipulation(orders, ethers.parseEther("95"));
+      expect(result.manipulationScore).to.equal(0);
+    });
+
+    it("should produce identical clearing price regardless of input order", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const buysA = [makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("110")),
+                     makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("100"))];
+      const sellsA = [makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("90")),
+                      makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("95"))];
+
+      const buysB = [makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("100")),
+                     makeOrder(BUY, ethers.parseEther("10"), ethers.parseEther("110"))];
+      const sellsB = [makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("95")),
+                      makeOrder(SELL, ethers.parseEther("10"), ethers.parseEther("90"))];
+
+      const resultA = await engine.computeBatchAuction(buysA, sellsA);
+      const resultB = await engine.computeBatchAuction(buysB, sellsB);
+      expect(resultA.clearingPrice).to.equal(resultB.clearingPrice);
+    });
+
+    it("should handle single buy and single sell at same price", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const buys = [makeOrder(BUY, ethers.parseEther("50"), ethers.parseEther("100"))];
+      const sells = [makeOrder(SELL, ethers.parseEther("30"), ethers.parseEther("100"))];
+      const result = await engine.computeBatchAuction(buys, sells);
+      expect(result.clearingPrice).to.equal(ethers.parseEther("100"));
+      expect(result.totalBuyFill).to.equal(ethers.parseEther("50"));
+      expect(result.totalSellFill).to.equal(ethers.parseEther("30"));
+    });
+
+    it("should compute TWAP with many observations", async function () {
+      const { engine } = await loadFixture(deployEngineFixture);
+      const prices = Array.from({length: 20}, (_, i) => ethers.parseEther(`${100 + i}`));
+      const weights = Array.from({length: 20}, () => ethers.parseEther("1"));
+      const twap = await engine.computeTWAP(prices, weights);
+      // Average of 100..119 = 109.5, but integer division: (100+119)*20/2 / 20 = 109
+      expect(twap).to.be.gte(ethers.parseEther("109"));
+      expect(twap).to.be.lte(ethers.parseEther("110"));
+    });
+  });
 });

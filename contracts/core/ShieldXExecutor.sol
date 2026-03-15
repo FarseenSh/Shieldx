@@ -2,18 +2,18 @@
 pragma solidity ^0.8.20;
 
 import "../interfaces/IXCM.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 
 /// @title ShieldXExecutor
 /// @notice XCM cross-chain execution module for ShieldX protocol
 /// @dev Routes matched fills to target parachains via the XCM precompile.
-///      Manages a parachain registry and builds SCALE-encoded XCM messages
-///      for WithdrawAsset + BuyExecution + DepositAsset pattern.
-contract ShieldXExecutor {
-    /// @notice Address of the authorized router/settlement contract
-    address public router;
+///      Uses OpenZeppelin AccessControl with ROUTER_ROLE and ADMIN_ROLE.
+contract ShieldXExecutor is AccessControl {
+    /// @notice Role identifier for the authorized router
+    bytes32 public constant ROUTER_ROLE = keccak256("ROUTER_ROLE");
 
-    /// @notice Address of the contract owner (deployer)
-    address public owner;
+    /// @notice Role identifier for admin operations (parachain registration)
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
     /// @notice XCM precompile interface
     IXcm public xcm;
@@ -37,39 +37,26 @@ contract ShieldXExecutor {
     /// @param paraId The registered parachain ID
     event ParachainRegistered(uint32 indexed paraId);
 
-    /// @notice Restricts function access to the authorized router
-    modifier onlyRouter() {
-        require(msg.sender == router, "ShieldXExecutor: caller is not the router");
-        _;
-    }
-
-    /// @notice Restricts function access to the contract owner
-    modifier onlyOwner() {
-        require(msg.sender == owner, "ShieldXExecutor: caller is not the owner");
-        _;
-    }
-
     /// @notice Initialize the executor
-    /// @dev Sets deployer as owner and initial router. Connects to XCM precompile.
+    /// @dev Sets deployer as admin and router. Connects to XCM precompile.
     constructor() {
-        owner = msg.sender;
-        router = msg.sender;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(ADMIN_ROLE, msg.sender);
+        _grantRole(ROUTER_ROLE, msg.sender);
         xcm = IXcm(XCM_PRECOMPILE_ADDRESS);
     }
 
     /// @notice Update the authorized router address
-    /// @dev Only callable by the contract owner
     /// @param _router New router address
-    function setRouter(address _router) external onlyOwner {
+    function setRouter(address _router) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_router != address(0), "ShieldXExecutor: router cannot be zero address");
-        router = _router;
+        _grantRole(ROUTER_ROLE, _router);
     }
 
     /// @notice Register a parachain destination for order routing
-    /// @dev Only callable by the contract owner
     /// @param paraId The parachain ID (e.g., 2034 for Hydration, 2030 for Bifrost)
     /// @param destination SCALE-encoded destination MultiLocation
-    function registerParachain(uint32 paraId, bytes calldata destination) external onlyOwner {
+    function registerParachain(uint32 paraId, bytes calldata destination) external onlyRole(ADMIN_ROLE) {
         require(destination.length > 0, "ShieldXExecutor: empty destination");
         parachainDestinations[paraId] = destination;
         emit ParachainRegistered(paraId);
@@ -85,7 +72,7 @@ contract ShieldXExecutor {
         address trader,
         address tokenOut,
         uint256 fillAmount
-    ) external onlyRouter {
+    ) external onlyRole(ROUTER_ROLE) {
         uint32 targetPara = _getTargetParachain(tokenOut);
         bytes memory destination = parachainDestinations[targetPara];
         require(destination.length > 0, "ShieldXExecutor: parachain not registered");

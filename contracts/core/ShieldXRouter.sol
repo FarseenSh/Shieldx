@@ -6,13 +6,14 @@ import "../libraries/EpochLib.sol";
 import "../interfaces/IShieldXEngine.sol";
 import "./ShieldXVault.sol";
 import "./ShieldXSettlement.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @title ShieldXRouter
 /// @notice Main entry point for the ShieldX MEV-protected batch auction protocol
 /// @dev Manages the commit-reveal-settle lifecycle for order batches within epochs.
-///      Users commit hidden orders with collateral, reveal after epoch ends,
-///      then settlement computes uniform clearing price via the engine contract.
-contract ShieldXRouter {
+///      Uses OpenZeppelin AccessControl for RBAC and Pausable for emergency circuit breaker.
+contract ShieldXRouter is AccessControl, Pausable {
     using OrderLib for OrderLib.Order;
 
     // ═══════════════════════════════════════════════════════════
@@ -76,8 +77,32 @@ contract ShieldXRouter {
     /// @notice Settlement contract (bridge to engine)
     ShieldXSettlement public settlement;
 
-    /// @notice Contract owner
-    address public owner;
+    /// @notice Role for settling epochs
+    bytes32 public constant SETTLER_ROLE = keccak256("SETTLER_ROLE");
+
+    /// @notice Role for pausing/unpausing the protocol
+    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
+
+    /// @notice MEV surplus saved per user per epoch
+    mapping(uint256 => mapping(address => uint256)) public userSurplus;
+
+    /// @notice Total MEV surplus saved across all users in an epoch
+    mapping(uint256 => uint256) public epochTotalSurplus;
+
+    /// @notice Protocol fee in basis points (10 = 0.1%)
+    uint256 public protocolFeeBps = 10;
+
+    /// @notice Cumulative protocol fees collected across all epochs
+    uint256 public totalProtocolFees;
+
+    /// @notice Cumulative count of filled orders across all epochs
+    uint256 public totalOrdersProtected;
+
+    /// @notice Cumulative volume of all filled orders across all epochs
+    uint256 public totalVolumeProtected;
+
+    /// @notice Cumulative MEV surplus saved across all epochs
+    uint256 public totalMEVSaved;
 
     // ═══════════════════════════════════════════════════════════
     // EVENTS
@@ -106,11 +131,18 @@ contract ShieldXRouter {
         uint256 clearingPrice,
         uint256 totalBuyVolume,
         uint256 totalSellVolume,
-        uint256 matchedOrders
+        uint256 matchedOrders,
+        uint256 totalSurplus
     );
 
     /// @notice Emitted when a new epoch is created
     event EpochAdvanced(uint256 indexed newEpochId, uint256 startTime, uint256 endTime);
+
+    /// @notice Emitted when MEV surplus is saved for a trader
+    event MEVSaved(uint256 indexed epochId, address indexed trader, uint256 surplus);
+
+    /// @notice Emitted when protocol fees are collected from an epoch
+    event ProtocolFeeCollected(uint256 indexed epochId, uint256 feeAmount);
 
     /// @notice Emitted when unrevealed collateral is slashed
     event UnrevealedSlashed(
@@ -137,7 +169,10 @@ contract ShieldXRouter {
         address _vault,
         address _settlement
     ) {
-        owner = msg.sender;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(SETTLER_ROLE, msg.sender);
+        _grantRole(PAUSER_ROLE, msg.sender);
+
         epochDuration = _epochDuration;
         revealWindow = _revealWindow;
         minCollateral = _minCollateral;
@@ -168,7 +203,7 @@ contract ShieldXRouter {
     /// @dev Requires minimum collateral and unique commitment hash.
     ///      Auto-advances epoch if current one has fully expired.
     /// @param commitHash keccak256(abi.encodePacked(orderType, tokenIn, tokenOut, amountIn, minAmountOut, maxPrice, salt))
-    function commitOrder(bytes32 commitHash) external payable {
+    function commitOrder(bytes32 commitHash) external payable whenNotPaused {
         require(msg.value >= minCollateral, "ShieldXRouter: insufficient collateral");
         require(commitments[commitHash].committer == address(0), "ShieldXRouter: duplicate commitment");
 
@@ -220,7 +255,7 @@ contract ShieldXRouter {
         uint256 minAmountOut,
         uint256 maxPrice,
         bytes32 salt
-    ) external {
+    ) external whenNotPaused {
         // Reconstruct commitment hash
         bytes32 commitHash = OrderLib.computeCommitHash(
             orderType, tokenIn, tokenOut, amountIn, minAmountOut, maxPrice, salt
@@ -274,82 +309,11 @@ contract ShieldXRouter {
             block.timestamp > epoch.endTime + revealWindow,
             "ShieldXRouter: reveal window still open"
         );
+        require(epochOrders[epochId].length > 0, "ShieldXRouter: no orders to settle");
 
-        RevealedOrder[] storage orders = epochOrders[epochId];
-        require(orders.length > 0, "ShieldXRouter: no orders to settle");
-
-        // Split into buy and sell order arrays for the engine
-        uint256 buyCount;
-        uint256 sellCount;
-        for (uint256 i = 0; i < orders.length; i++) {
-            if (orders[i].orderType == OrderLib.OrderType.BUY) {
-                buyCount++;
-            } else {
-                sellCount++;
-            }
-        }
-
-        OrderLib.Order[] memory buyOrders = new OrderLib.Order[](buyCount);
-        OrderLib.Order[] memory sellOrders = new OrderLib.Order[](sellCount);
-        uint256[] memory buyOrigIdx = new uint256[](buyCount);
-        uint256[] memory sellOrigIdx = new uint256[](sellCount);
-
-        uint256 bi;
-        uint256 si;
-        for (uint256 i = 0; i < orders.length; i++) {
-            OrderLib.Order memory order = OrderLib.Order({
-                orderType: orders[i].orderType,
-                tokenIn: orders[i].tokenIn,
-                tokenOut: orders[i].tokenOut,
-                amountIn: orders[i].amountIn,
-                minAmountOut: orders[i].minAmountOut,
-                maxPrice: orders[i].maxPrice
-            });
-
-            if (orders[i].orderType == OrderLib.OrderType.BUY) {
-                buyOrders[bi] = order;
-                buyOrigIdx[bi] = i;
-                bi++;
-            } else {
-                sellOrders[si] = order;
-                sellOrigIdx[si] = i;
-                si++;
-            }
-        }
-
-        // Call settlement (which calls engine)
-        IShieldXEngine.BatchResult memory result = settlement.computeBatchSettlement(
-            buyOrders,
-            sellOrders
-        );
-
-        // Execute fills — map engine results back to original order indices
-        uint256 matchedCount;
-        for (uint256 i = 0; i < buyCount; i++) {
-            if (result.buyFills[i] > 0) {
-                _executeFill(orders[buyOrigIdx[i]], result.clearingPrice, result.buyFills[i]);
-                matchedCount++;
-            }
-        }
-        for (uint256 i = 0; i < sellCount; i++) {
-            if (result.sellFills[i] > 0) {
-                _executeFill(orders[sellOrigIdx[i]], result.clearingPrice, result.sellFills[i]);
-                matchedCount++;
-            }
-        }
-
-        epoch.clearingPrice = result.clearingPrice;
+        // _settleAndFill stores clearingPrice, surplus, and emits EpochSettled
+        _settleAndFill(epochId);
         epoch.settled = true;
-
-        emit EpochSettled(
-            epochId,
-            result.clearingPrice,
-            result.totalBuyFill,
-            result.totalSellFill,
-            matchedCount
-        );
-
-        // Return collateral for all revealed orders
         _returnCollateral(epochId);
     }
 
@@ -401,6 +365,79 @@ contract ShieldXRouter {
         }
     }
 
+    /// @dev Split orders, call engine, execute fills, compute surplus, emit event
+    function _settleAndFill(uint256 epochId) internal {
+        RevealedOrder[] storage orders = epochOrders[epochId];
+        (OrderLib.Order[] memory buyOrders, OrderLib.Order[] memory sellOrders,
+         uint256[] memory buyIdx, uint256[] memory sellIdx) = _splitOrders(orders);
+
+        IShieldXEngine.BatchResult memory r = settlement.computeBatchSettlement(buyOrders, sellOrders);
+        epochs[epochId].clearingPrice = r.clearingPrice;
+
+        uint256 matched;
+        uint256 surplus;
+        for (uint256 i = 0; i < buyOrders.length; i++) {
+            if (r.buyFills[i] > 0) {
+                _executeFill(orders[buyIdx[i]], r.clearingPrice, r.buyFills[i]);
+                matched++;
+                surplus += _recordSurplus(epochId, orders[buyIdx[i]], r.clearingPrice, r.buyFills[i]);
+            }
+        }
+        for (uint256 i = 0; i < sellOrders.length; i++) {
+            if (r.sellFills[i] > 0) {
+                _executeFill(orders[sellIdx[i]], r.clearingPrice, r.sellFills[i]);
+                matched++;
+                surplus += _recordSurplus(epochId, orders[sellIdx[i]], r.clearingPrice, r.sellFills[i]);
+            }
+        }
+        // Calculate protocol fees on total volume
+        uint256 totalVolume = r.totalBuyFill + r.totalSellFill;
+        uint256 epochFees = totalVolume * protocolFeeBps / 10000;
+
+        // Accumulate protocol stats
+        epochTotalSurplus[epochId] = surplus;
+        totalProtocolFees += epochFees;
+        totalOrdersProtected += matched;
+        totalVolumeProtected += totalVolume;
+        totalMEVSaved += surplus;
+
+        emit EpochSettled(epochId, r.clearingPrice, r.totalBuyFill, r.totalSellFill, matched, surplus);
+        if (epochFees > 0) {
+            emit ProtocolFeeCollected(epochId, epochFees);
+        }
+    }
+
+    /// @dev Split revealed orders into buy/sell arrays with original index tracking
+    function _splitOrders(RevealedOrder[] storage orders) internal view returns (
+        OrderLib.Order[] memory buyOrders, OrderLib.Order[] memory sellOrders,
+        uint256[] memory buyIdx, uint256[] memory sellIdx
+    ) {
+        uint256 n = orders.length;
+        uint256 buyCount;
+        for (uint256 i = 0; i < n; i++) {
+            if (orders[i].orderType == OrderLib.OrderType.BUY) buyCount++;
+        }
+        buyOrders = new OrderLib.Order[](buyCount);
+        sellOrders = new OrderLib.Order[](n - buyCount);
+        buyIdx = new uint256[](buyCount);
+        sellIdx = new uint256[](n - buyCount);
+        uint256 bi;
+        uint256 si;
+        for (uint256 i = 0; i < n; i++) {
+            OrderLib.Order memory o = OrderLib.Order(
+                orders[i].orderType, orders[i].tokenIn, orders[i].tokenOut,
+                orders[i].amountIn, orders[i].minAmountOut, orders[i].maxPrice
+            );
+            if (orders[i].orderType == OrderLib.OrderType.BUY) {
+                buyOrders[bi] = o;
+                buyIdx[bi++] = i;
+            } else {
+                sellOrders[si] = o;
+                sellIdx[si++] = i;
+            }
+        }
+    }
+
     /// @dev Execute a single fill for a matched order
     function _executeFill(
         RevealedOrder memory order,
@@ -413,6 +450,27 @@ contract ShieldXRouter {
         } else {
             // ERC20 or cross-chain fill — route via settlement
             settlement.executeFill(order.trader, order.tokenOut, clearingPrice, fillAmount);
+        }
+    }
+
+    /// @dev Calculate and record MEV surplus for a filled order
+    function _recordSurplus(
+        uint256 epochId,
+        RevealedOrder memory order,
+        uint256 clearingPrice,
+        uint256 fillAmount
+    ) internal returns (uint256 surplus) {
+        if (clearingPrice == 0) return 0;
+
+        if (order.orderType == OrderLib.OrderType.BUY && order.maxPrice > clearingPrice) {
+            surplus = (order.maxPrice - clearingPrice) * fillAmount / clearingPrice;
+        } else if (order.orderType == OrderLib.OrderType.SELL && clearingPrice > order.maxPrice) {
+            surplus = (clearingPrice - order.maxPrice) * fillAmount / clearingPrice;
+        }
+
+        if (surplus > 0) {
+            userSurplus[epochId][order.trader] += surplus;
+            emit MEVSaved(epochId, order.trader, surplus);
         }
     }
 
@@ -464,5 +522,55 @@ contract ShieldXRouter {
         EpochLib.Epoch storage epoch = epochs[currentEpochId];
         return block.timestamp > epoch.endTime &&
                block.timestamp <= epoch.endTime + revealWindow;
+    }
+
+    /// @notice Get the MEV surplus saved for a user in a specific epoch
+    /// @param epochId The epoch to query
+    /// @param user The user address
+    /// @return The surplus amount (18 decimals)
+    function getUserSurplus(uint256 epochId, address user) external view returns (uint256) {
+        return userSurplus[epochId][user];
+    }
+
+    /// @notice Get the total MEV surplus saved across all users in an epoch
+    /// @param epochId The epoch to query
+    /// @return The total surplus amount (18 decimals)
+    function getEpochTotalSurplus(uint256 epochId) external view returns (uint256) {
+        return epochTotalSurplus[epochId];
+    }
+
+    /// @notice Get cumulative protocol statistics
+    /// @return orders Total filled orders across all epochs
+    /// @return volume Total volume of all filled orders
+    /// @return mevSaved Total MEV surplus saved for users
+    /// @return fees Total protocol fees collected
+    function getProtocolStats() external view returns (
+        uint256 orders, uint256 volume, uint256 mevSaved, uint256 fees
+    ) {
+        return (totalOrdersProtected, totalVolumeProtected, totalMEVSaved, totalProtocolFees);
+    }
+
+    /// @notice Set the protocol fee in basis points
+    /// @dev Only callable by DEFAULT_ADMIN_ROLE. Maximum 100 bps (1%).
+    /// @param newFeeBps New fee in basis points (1 bps = 0.01%)
+    function setProtocolFee(uint256 newFeeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(newFeeBps <= 100, "ShieldXRouter: fee cannot exceed 1%");
+        protocolFeeBps = newFeeBps;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // EMERGENCY CONTROLS
+    // ═══════════════════════════════════════════════════════════
+
+    /// @notice Pause the protocol — blocks new commits and reveals
+    /// @dev Only callable by accounts with PAUSER_ROLE. Settlement still works when paused.
+    function pause() external onlyRole(PAUSER_ROLE) {
+        _pause();
+    }
+
+    /// @notice Unpause the protocol — re-enables commits and reveals
+    /// @dev Only callable by accounts with PAUSER_ROLE
+    function unpause() external onlyRole(PAUSER_ROLE) {
+        _unpause();
     }
 }

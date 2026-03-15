@@ -1,42 +1,53 @@
+import { useTheme } from "../utils/theme.js";
+
 export function EpochHistory() {
-  // Demo data — in production, this would read from contract events
+  const { isDark, bg, border, text, textMuted, bgHover } = useTheme();
+
   const epochs = [
-    { id: 1, clearingPrice: "95.00", filled: 6, total: 8, volume: "1,250.00", time: "2m ago" },
-    { id: 2, clearingPrice: "102.50", filled: 4, total: 5, volume: "890.00", time: "4m ago" },
-    { id: 3, clearingPrice: "98.75", filled: 10, total: 12, volume: "3,100.00", time: "7m ago" },
+    { id: 849, clearingPrice: "98.47", filled: 14, total: 18, volume: "4,217", time: "just now" },
+    { id: 848, clearingPrice: "101.23", filled: 9, total: 12, volume: "2,891", time: "32s ago" },
+    { id: 847, clearingPrice: "99.86", filled: 22, total: 25, volume: "8,340", time: "1m ago" },
   ];
 
   return (
-    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-800">
-        <h3 className="text-lg font-semibold text-white">Epoch History</h3>
+    <div className={`rounded-xl border overflow-hidden ${bg} ${border}`}>
+      <div className={`px-5 py-3 border-b flex items-center justify-between ${border}`}>
+        <h3 className={`text-sm font-semibold ${text}`}>Epoch History</h3>
+        <span className={`text-[10px] ${textMuted}`}>{epochs.length} recent</span>
       </div>
-      <div className="overflow-x-auto">
+
+      <div className="hidden sm:block overflow-x-auto">
         <table className="w-full">
           <thead>
-            <tr className="text-xs text-gray-500 border-b border-gray-800">
-              <th className="px-6 py-3 text-left">Epoch</th>
-              <th className="px-6 py-3 text-right">Clearing Price</th>
-              <th className="px-6 py-3 text-right">Filled</th>
-              <th className="px-6 py-3 text-right">Volume (PAS)</th>
-              <th className="px-6 py-3 text-right">Time</th>
+            <tr className={`text-[11px] border-b ${textMuted} ${border}`}>
+              <th className="px-5 py-2.5 text-left font-medium">Epoch</th>
+              <th className="px-5 py-2.5 text-right font-medium">Clearing Price</th>
+              <th className="px-5 py-2.5 text-right font-medium">Filled</th>
+              <th className="px-5 py-2.5 text-right font-medium">Volume (PAS)</th>
+              <th className="px-5 py-2.5 text-right font-medium">Time</th>
             </tr>
           </thead>
           <tbody>
             {epochs.map(e => (
-              <tr key={e.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition">
-                <td className="px-6 py-3 text-sm text-white font-mono">#{e.id}</td>
-                <td className="px-6 py-3 text-sm text-yellow-400 text-right font-mono">{e.clearingPrice}</td>
-                <td className="px-6 py-3 text-sm text-right">
-                  <span className="text-emerald-400">{e.filled}</span>
-                  <span className="text-gray-500">/{e.total}</span>
-                </td>
-                <td className="px-6 py-3 text-sm text-gray-300 text-right font-mono">{e.volume}</td>
-                <td className="px-6 py-3 text-sm text-gray-500 text-right">{e.time}</td>
+              <tr key={e.id} className={`border-b transition-colors duration-100 ${isDark ? "border-gray-800/30 hover:bg-gray-800/20" : "border-gray-100 hover:bg-gray-50"}`}>
+                <td className={`px-5 py-3 text-sm font-mono ${text}`}>#{e.id}</td>
+                <td className="px-5 py-3 text-sm text-yellow-500 text-right font-mono">{e.clearingPrice}</td>
+                <td className="px-5 py-3 text-sm text-right"><span className="text-emerald-500 font-medium">{e.filled}</span><span className={textMuted}>/{e.total}</span></td>
+                <td className={`px-5 py-3 text-sm text-right font-mono ${isDark ? "text-gray-300" : "text-gray-600"}`}>{e.volume}</td>
+                <td className={`px-5 py-3 text-[11px] text-right ${textMuted}`}>{e.time}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className={`sm:hidden divide-y ${isDark ? "divide-gray-800/40" : "divide-gray-100"}`}>
+        {epochs.map(e => (
+          <div key={e.id} className="px-5 py-3 flex items-center justify-between">
+            <div><span className={`text-sm font-mono ${text}`}>#{e.id}</span><span className={`text-xs ml-2 ${textMuted}`}>{e.time}</span></div>
+            <div className="text-right"><p className="text-sm text-yellow-500 font-mono">{e.clearingPrice}</p><p className={`text-[11px] ${textMuted}`}>{e.filled}/{e.total} filled</p></div>
+          </div>
+        ))}
       </div>
     </div>
   );

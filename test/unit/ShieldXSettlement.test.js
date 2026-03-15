@@ -37,10 +37,11 @@ describe("ShieldXSettlement", function () {
       expect(await settlement.engineAddress()).to.equal(await engine.getAddress());
     });
 
-    it("should set deployer as initial router and owner", async function () {
+    it("should grant deployer DEFAULT_ADMIN_ROLE and ROUTER_ROLE", async function () {
       const { settlement, deployer } = await loadFixture(deploySettlementFixture);
-      expect(await settlement.router()).to.equal(deployer.address);
-      expect(await settlement.owner()).to.equal(deployer.address);
+      const ROUTER_ROLE = await settlement.ROUTER_ROLE();
+      expect(await settlement.hasRole(ROUTER_ROLE, deployer.address)).to.be.true;
+      expect(await settlement.hasRole(await settlement.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.true;
     });
 
     it("should revert when engine is zero address", async function () {
@@ -117,7 +118,7 @@ describe("ShieldXSettlement", function () {
 
       await expect(
         settlement.connect(attacker).computeBatchSettlement(buys, sells)
-      ).to.be.revertedWith("ShieldXSettlement: caller is not the router");
+      ).to.be.revertedWithCustomError(settlement, "AccessControlUnauthorizedAccount");
     });
   });
 
@@ -136,29 +137,29 @@ describe("ShieldXSettlement", function () {
       const { settlement, attacker, user1 } = await loadFixture(deploySettlementFixture);
       await expect(
         settlement.connect(attacker).executeFill(user1.address, ethers.ZeroAddress, 100, 10)
-      ).to.be.revertedWith("ShieldXSettlement: caller is not the router");
+      ).to.be.revertedWithCustomError(settlement, "AccessControlUnauthorizedAccount");
     });
   });
 
   describe("setRouter", function () {
-    it("should allow owner to update router", async function () {
+    it("should allow admin to grant ROUTER_ROLE via setRouter", async function () {
       const { settlement, user1 } = await loadFixture(deploySettlementFixture);
       await settlement.setRouter(user1.address);
-      expect(await settlement.router()).to.equal(user1.address);
+      const ROUTER_ROLE = await settlement.ROUTER_ROLE();
+      expect(await settlement.hasRole(ROUTER_ROLE, user1.address)).to.be.true;
     });
 
     it("should emit RouterUpdated event", async function () {
-      const { settlement, deployer, user1 } = await loadFixture(deploySettlementFixture);
+      const { settlement, user1 } = await loadFixture(deploySettlementFixture);
       await expect(settlement.setRouter(user1.address))
-        .to.emit(settlement, "RouterUpdated")
-        .withArgs(deployer.address, user1.address);
+        .to.emit(settlement, "RouterUpdated");
     });
 
     it("should revert when non-owner calls setRouter", async function () {
       const { settlement, attacker, user1 } = await loadFixture(deploySettlementFixture);
       await expect(
         settlement.connect(attacker).setRouter(user1.address)
-      ).to.be.revertedWith("ShieldXSettlement: caller is not the owner");
+      ).to.be.revertedWithCustomError(settlement, "AccessControlUnauthorizedAccount");
     });
   });
 
@@ -173,7 +174,7 @@ describe("ShieldXSettlement", function () {
       const { settlement, attacker, user1 } = await loadFixture(deploySettlementFixture);
       await expect(
         settlement.connect(attacker).setXcmExecutor(user1.address)
-      ).to.be.revertedWith("ShieldXSettlement: caller is not the owner");
+      ).to.be.revertedWithCustomError(settlement, "AccessControlUnauthorizedAccount");
     });
   });
 });

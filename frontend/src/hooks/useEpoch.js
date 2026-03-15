@@ -6,12 +6,26 @@ export function useEpoch(provider) {
   const [epoch, setEpoch] = useState(null);
   const [phase, setPhase] = useState("commit");
   const [timeRemaining, setTimeRemaining] = useState(0);
+  const [lastSettled, setLastSettled] = useState(null);
   const intervalRef = useRef(null);
+  const prevPhaseRef = useRef("commit");
 
   useEffect(() => {
     if (!provider || CONTRACT_ADDRESSES.router === ethers.ZeroAddress) return;
 
     const router = new ethers.Contract(CONTRACT_ADDRESSES.router, ROUTER_ABI, provider);
+
+    // Listen for EpochSettled events
+    const onSettled = (epochId, clearingPrice, buyVol, sellVol, matched, surplus) => {
+      setLastSettled({
+        epochId: Number(epochId),
+        clearingPrice: ethers.formatEther(clearingPrice),
+        totalSurplus: ethers.formatEther(surplus),
+        matchedOrders: Number(matched),
+      });
+    };
+
+    try { router.on("EpochSettled", onSettled); } catch {}
 
     async function fetchEpoch() {
       try {
@@ -51,15 +65,19 @@ export function useEpoch(provider) {
         });
         setPhase(currentPhase);
         setTimeRemaining(remaining);
+        prevPhaseRef.current = currentPhase;
       } catch (err) {
         // Contract not deployed or not connected
       }
     }
 
     fetchEpoch();
-    intervalRef.current = setInterval(fetchEpoch, 5000);
+    intervalRef.current = setInterval(fetchEpoch, 3000);
 
-    return () => clearInterval(intervalRef.current);
+    return () => {
+      clearInterval(intervalRef.current);
+      try { router.off("EpochSettled", onSettled); } catch {}
+    };
   }, [provider]);
 
   return {
@@ -68,5 +86,6 @@ export function useEpoch(provider) {
     timeRemaining,
     isCommitPhase: phase === "commit",
     isRevealPhase: phase === "reveal",
+    lastSettled,
   };
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "./components/Header.jsx";
 import { EpochTimer } from "./components/EpochTimer.jsx";
 import { OrderPanel } from "./components/OrderPanel.jsx";
@@ -9,35 +9,60 @@ import { Dashboard } from "./components/Dashboard.jsx";
 import { useWallet } from "./hooks/useWallet.js";
 import { useEpoch } from "./hooks/useEpoch.js";
 import { useShieldX } from "./hooks/useShieldX.js";
+import { ThemeContext } from "./utils/theme.js";
 
-const TABS = ["Trade", "MEV Demo", "History", "Dashboard"];
+const TABS = ["Dashboard", "Trade", "MEV Demo", "History"];
 
 export function App() {
-  const [activeTab, setActiveTab] = useState("MEV Demo");
+  const [activeTab, setActiveTab] = useState("Dashboard");
+  const [isDark, setIsDark] = useState(true);
   const wallet = useWallet();
-  const { epoch, phase, timeRemaining } = useEpoch(wallet.provider);
-  const shieldx = useShieldX(wallet.signer);
+  const { epoch, phase, timeRemaining, lastSettled } = useEpoch(wallet.provider);
+  const shieldx = useShieldX(wallet.signer, epoch?.id);
+
+  // Auto-reveal when phase changes to "reveal"
+  useEffect(() => {
+    if (phase === "reveal" && shieldx.pendingOrders.some(o => !o.revealed)) {
+      shieldx.autoReveal();
+    }
+  }, [phase]);
+
+  // Fetch surplus after settlement
+  useEffect(() => {
+    if (lastSettled && wallet.account) {
+      shieldx.fetchSurplus(lastSettled.epochId, wallet.account);
+    }
+  }, [lastSettled, wallet.account]);
+
+  const t = isDark
+    ? { bg: "bg-slate-950", text: "text-white", card: "bg-gray-900", border: "border-gray-800", navBorder: "border-gray-800/60", cls: "" }
+    : { bg: "bg-slate-50", text: "text-gray-900", card: "bg-white", border: "border-gray-200", navBorder: "border-gray-200", cls: "light-theme" };
+
+  const pendingCount = shieldx.pendingOrders.filter(o => !o.settled).length;
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <ThemeContext.Provider value={isDark}>
+    <div className={`min-h-screen ${t.bg} ${t.text} ${t.cls}`}>
       <Header
         account={wallet.account}
         isConnected={wallet.isConnected}
         balance={wallet.balance}
         onConnect={wallet.connect}
         onDisconnect={wallet.disconnect}
+        isDark={isDark}
+        onToggleTheme={() => setIsDark(!isDark)}
       />
 
       {/* Tab navigation */}
-      <nav className="flex border-b border-gray-800 px-6">
+      <nav className={`flex border-b ${t.navBorder} px-4 sm:px-6 overflow-x-auto scrollbar-none`} style={{ WebkitOverflowScrolling: "touch" }}>
         {TABS.map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-3 text-sm font-medium transition border-b-2 -mb-px ${
+            className={`px-3 sm:px-4 py-3 text-sm font-medium transition-all duration-150 border-b-2 -mb-px whitespace-nowrap ${
               activeTab === tab
-                ? "text-emerald-400 border-emerald-400"
-                : "text-gray-500 border-transparent hover:text-gray-300"
+                ? `text-emerald-400 border-emerald-500 ${isDark ? "" : "text-emerald-600"}`
+                : `border-transparent hover:opacity-80 ${isDark ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600"}`
             }`}
           >
             {tab}
@@ -46,52 +71,83 @@ export function App() {
       </nav>
 
       {/* Tab content */}
-      <main className="max-w-6xl mx-auto px-6 py-6">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+        {activeTab === "Dashboard" && (
+          <Dashboard onStartTrading={() => setActiveTab("Trade")} provider={wallet.provider} />
+        )}
+
         {activeTab === "Trade" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-5">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <OrderPanel
                 onCommit={shieldx.commitOrder}
                 isLoading={shieldx.isLoading}
                 isConnected={wallet.isConnected}
                 phase={phase}
+                savedAmount={shieldx.savedAmount}
+                lastSettled={lastSettled}
               />
-              <EpochTimer epoch={epoch} phase={phase} timeRemaining={timeRemaining} />
+              <EpochTimer
+                epoch={epoch}
+                phase={phase}
+                timeRemaining={timeRemaining}
+                pendingCount={pendingCount}
+                lastSettled={lastSettled}
+              />
             </div>
 
             <BatchVisualizer epoch={epoch} />
 
-            {shieldx.error && (
-              <div className="p-4 bg-red-950 border border-red-800 rounded-lg text-red-400 text-sm">
-                {shieldx.error}
+            {shieldx.error && !shieldx.error.includes("could not decode") && !shieldx.error.includes("CALL_EXCEPTION") && (
+              <div className={`p-3 rounded-xl text-sm flex items-center gap-2 ${isDark ? "bg-amber-950/30 border border-amber-800/40 text-amber-400" : "bg-amber-50 border border-amber-200 text-amber-600"}`}>
+                <span>Transaction failed. Please check your wallet and try again.</span>
               </div>
             )}
 
             {shieldx.pendingOrders.length > 0 && (
-              <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
-                <h3 className="text-lg font-semibold text-white mb-3">Pending Orders</h3>
+              <div className={`rounded-xl p-5 border ${t.card} ${t.border}`}>
+                <h3 className={`text-sm font-semibold mb-3 ${t.text}`}>Your Orders</h3>
                 <div className="space-y-2">
                   {shieldx.pendingOrders.map((order, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg">
-                      <div>
-                        <span className={`text-xs font-bold ${order.params.orderType === 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    <div key={i} className={`flex items-center justify-between p-3 rounded-lg border ${isDark ? "bg-gray-800/50 border-gray-700/30" : "bg-gray-50 border-gray-200"}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                          order.params.orderType === 0 ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"
+                        }`}>
                           {order.params.orderType === 0 ? "BUY" : "SELL"}
                         </span>
-                        <span className="text-xs text-gray-400 ml-2 font-mono">
-                          {order.commitHash.slice(0, 16)}...
+                        <span className={`text-[11px] font-mono truncate ${isDark ? "text-gray-500" : "text-gray-400"}`}>
+                          {order.commitHash.slice(0, 14)}...
                         </span>
                       </div>
-                      {!order.revealed && phase === "reveal" && (
-                        <button
-                          onClick={() => shieldx.revealOrder(order.commitHash)}
-                          className="px-3 py-1 text-xs bg-amber-600 text-white rounded hover:bg-amber-500 transition"
-                        >
-                          Reveal
-                        </button>
-                      )}
-                      {order.revealed && (
-                        <span className="text-xs text-emerald-400">Revealed</span>
-                      )}
+                      <div className="shrink-0 ml-2">
+                        {order.status === "committed" && phase === "commit" && (
+                          <span className={`text-[11px] ${isDark ? "text-gray-500" : "text-gray-400"}`}>Waiting...</span>
+                        )}
+                        {order.status === "committed" && phase === "reveal" && (
+                          <span className="text-[11px] text-amber-400 flex items-center gap-1">
+                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            Auto-revealing...
+                          </span>
+                        )}
+                        {order.status === "revealing" && (
+                          <span className="text-[11px] text-amber-400 flex items-center gap-1">
+                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            Revealing...
+                          </span>
+                        )}
+                        {order.status === "revealed" && (
+                          <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17L4 12"/></svg>
+                            Revealed
+                          </span>
+                        )}
+                        {order.status === "settled" && (
+                          <span className="text-[11px] text-emerald-400 font-medium">
+                            Filled{order.clearingPrice ? ` @ ${parseFloat(order.clearingPrice).toFixed(2)}` : ""}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -103,9 +159,21 @@ export function App() {
         {activeTab === "MEV Demo" && <SandwichDemo />}
 
         {activeTab === "History" && <EpochHistory />}
-
-        {activeTab === "Dashboard" && <Dashboard />}
       </main>
+
+      {/* Footer */}
+      <footer className={`border-t ${t.navBorder} py-4 mt-8`}>
+        <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-gray-500">
+          <span>ShieldX Protocol</span>
+          <span>&middot;</span>
+          <a href="https://github.com/FarseenSh/Shieldx" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors">GitHub</a>
+          <span>&middot;</span>
+          <a href="https://blockscout-testnet.polkadot.io/" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors">Explorer</a>
+          <span>&middot;</span>
+          <span>Polkadot Hackathon 2026 &middot; Track 2</span>
+        </div>
+      </footer>
     </div>
+    </ThemeContext.Provider>
   );
 }

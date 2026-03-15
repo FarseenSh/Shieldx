@@ -3,10 +3,11 @@ import { ethers } from "ethers";
 import { ROUTER_ABI, CONTRACT_ADDRESSES } from "../utils/contracts.js";
 import { generateCommitment } from "../utils/commitHash.js";
 
-export function useShieldX(signer) {
+export function useShieldX(signer, currentEpochId) {
   const [pendingOrders, setPendingOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [savedAmount, setSavedAmount] = useState(null);
 
   const getRouter = useCallback(() => {
     if (!signer) return null;
@@ -26,26 +27,38 @@ export function useShieldX(signer) {
       );
 
       const tx = await router.commitOrder(commitHash, { value: collateral });
-      await tx.wait();
+      const receipt = await tx.wait();
 
-      setPendingOrders(prev => [...prev, { commitHash, salt, params, tx: tx.hash }]);
+      setPendingOrders(prev => [...prev, {
+        commitHash,
+        salt,
+        params,
+        txHash: tx.hash,
+        epochId: currentEpochId || 1,
+        status: "committed",
+        revealed: false,
+        settled: false,
+        clearingPrice: null,
+        surplus: null,
+      }]);
       return commitHash;
     } catch (err) {
-      setError(err.message);
+      setError(err.reason || err.message);
     } finally {
       setIsLoading(false);
     }
-  }, [getRouter]);
+  }, [getRouter, currentEpochId]);
 
   const revealOrder = useCallback(async (commitHash) => {
     const router = getRouter();
     if (!router) { setError("Wallet not connected"); return; }
 
     const order = pendingOrders.find(o => o.commitHash === commitHash);
-    if (!order) { setError("Order not found — salt needed for reveal"); return; }
+    if (!order) { setError("Order not found"); return; }
 
-    setIsLoading(true);
-    setError(null);
+    setPendingOrders(prev => prev.map(o =>
+      o.commitHash === commitHash ? { ...o, status: "revealing" } : o
+    ));
 
     try {
       const { params, salt } = order;
@@ -56,14 +69,24 @@ export function useShieldX(signer) {
       await tx.wait();
 
       setPendingOrders(prev => prev.map(o =>
-        o.commitHash === commitHash ? { ...o, revealed: true } : o
+        o.commitHash === commitHash ? { ...o, revealed: true, status: "revealed" } : o
       ));
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
+      setPendingOrders(prev => prev.map(o =>
+        o.commitHash === commitHash ? { ...o, status: "committed" } : o
+      ));
+      setError(err.reason || err.message);
     }
   }, [getRouter, pendingOrders]);
+
+  const autoReveal = useCallback(async () => {
+    const unrevealed = pendingOrders.filter(o => !o.revealed && o.status === "committed");
+    if (unrevealed.length === 0) return;
+
+    for (const order of unrevealed) {
+      await revealOrder(order.commitHash);
+    }
+  }, [pendingOrders, revealOrder]);
 
   const settleEpoch = useCallback(async (epochId) => {
     const router = getRouter();
@@ -75,12 +98,52 @@ export function useShieldX(signer) {
     try {
       const tx = await router.settleEpoch(epochId);
       await tx.wait();
+
+      // Mark orders in this epoch as settled
+      setPendingOrders(prev => prev.map(o =>
+        o.epochId === epochId ? { ...o, settled: true, status: "settled" } : o
+      ));
     } catch (err) {
-      setError(err.message);
+      setError(err.reason || err.message);
     } finally {
       setIsLoading(false);
     }
   }, [getRouter]);
 
-  return { commitOrder, revealOrder, settleEpoch, pendingOrders, isLoading, error };
+  const fetchSurplus = useCallback(async (epochId, account) => {
+    const router = getRouter();
+    if (!router || !account) return;
+
+    try {
+      const surplus = await router.getUserSurplus(epochId, account);
+      const formatted = ethers.formatEther(surplus);
+      setSavedAmount(formatted);
+
+      // Update order state
+      const epoch = await router.getCurrentEpoch();
+      setPendingOrders(prev => prev.map(o =>
+        o.epochId === epochId ? {
+          ...o,
+          settled: true,
+          status: "settled",
+          clearingPrice: ethers.formatEther(epoch.clearingPrice),
+          surplus: formatted,
+        } : o
+      ));
+    } catch (err) {
+      // Surplus not available yet
+    }
+  }, [getRouter]);
+
+  return {
+    commitOrder,
+    revealOrder,
+    autoReveal,
+    settleEpoch,
+    fetchSurplus,
+    pendingOrders,
+    isLoading,
+    error,
+    savedAmount,
+  };
 }

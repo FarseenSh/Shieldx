@@ -20,9 +20,12 @@ describe("ShieldXVault", function () {
       expect(await vault.treasury()).to.equal(treasury.address);
     });
 
-    it("should set deployer as initial router", async function () {
+    it("should grant deployer DEFAULT_ADMIN_ROLE and ROUTER_ROLE", async function () {
       const { vault, deployer } = await loadFixture(deployVaultFixture);
-      expect(await vault.router()).to.equal(deployer.address);
+      const ROUTER_ROLE = await vault.ROUTER_ROLE();
+      const DEFAULT_ADMIN = await vault.DEFAULT_ADMIN_ROLE();
+      expect(await vault.hasRole(ROUTER_ROLE, deployer.address)).to.be.true;
+      expect(await vault.hasRole(DEFAULT_ADMIN, deployer.address)).to.be.true;
     });
 
     it("should revert if treasury is zero address", async function () {
@@ -34,17 +37,18 @@ describe("ShieldXVault", function () {
   });
 
   describe("setRouter", function () {
-    it("should allow router to set a new router", async function () {
+    it("should allow admin to grant ROUTER_ROLE via setRouter", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       await vault.setRouter(user1.address);
-      expect(await vault.router()).to.equal(user1.address);
+      const ROUTER_ROLE = await vault.ROUTER_ROLE();
+      expect(await vault.hasRole(ROUTER_ROLE, user1.address)).to.be.true;
     });
 
-    it("should revert when non-router calls setRouter", async function () {
+    it("should revert when non-admin calls setRouter", async function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
         vault.connect(attacker).setRouter(user1.address)
-      ).to.be.revertedWith("ShieldXVault: caller is not the router");
+      ).to.be.revertedWithCustomError(vault, "AccessControlUnauthorizedAccount");
     });
 
     it("should revert when setting router to zero address", async function () {
@@ -91,7 +95,7 @@ describe("ShieldXVault", function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
         vault.connect(attacker).lockCollateral(user1.address, testHash, { value: ethers.parseEther("1.0") })
-      ).to.be.revertedWith("ShieldXVault: caller is not the router");
+      ).to.be.revertedWithCustomError(vault, "AccessControlUnauthorizedAccount");
     });
 
     it("should revert when collateral amount is zero", async function () {
@@ -157,7 +161,7 @@ describe("ShieldXVault", function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
         vault.connect(attacker).returnCollateral(user1.address, testHash)
-      ).to.be.revertedWith("ShieldXVault: caller is not the router");
+      ).to.be.revertedWithCustomError(vault, "AccessControlUnauthorizedAccount");
     });
 
     it("should return one commitment while keeping another", async function () {
@@ -219,7 +223,7 @@ describe("ShieldXVault", function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
         vault.connect(attacker).slashCollateral(user1.address, testHash)
-      ).to.be.revertedWith("ShieldXVault: caller is not the router");
+      ).to.be.revertedWithCustomError(vault, "AccessControlUnauthorizedAccount");
     });
 
     it("should slash one commitment while keeping another", async function () {
@@ -267,7 +271,7 @@ describe("ShieldXVault", function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
         vault.connect(attacker).releaseFill(user1.address, ethers.parseEther("1.0"))
-      ).to.be.revertedWith("ShieldXVault: caller is not the router");
+      ).to.be.revertedWithCustomError(vault, "AccessControlUnauthorizedAccount");
     });
 
     it("should revert when release amount is zero", async function () {
@@ -296,6 +300,92 @@ describe("ShieldXVault", function () {
       });
 
       expect(await ethers.provider.getBalance(await vault.getAddress())).to.equal(amount);
+    });
+  });
+
+  describe("edge cases", function () {
+    it("should track vault balance correctly after multiple lock/return cycles", async function () {
+      const { vault, user1 } = await loadFixture(deployVaultFixture);
+      const hash1 = ethers.keccak256(ethers.toUtf8Bytes("cycle-1"));
+      const hash2 = ethers.keccak256(ethers.toUtf8Bytes("cycle-2"));
+
+      await vault.lockCollateral(user1.address, hash1, { value: ethers.parseEther("1.0") });
+      await vault.lockCollateral(user1.address, hash2, { value: ethers.parseEther("2.0") });
+      expect(await vault.collateral(user1.address)).to.equal(ethers.parseEther("3.0"));
+
+      await vault.returnCollateral(user1.address, hash1);
+      expect(await vault.collateral(user1.address)).to.equal(ethers.parseEther("2.0"));
+
+      await vault.returnCollateral(user1.address, hash2);
+      expect(await vault.collateral(user1.address)).to.equal(0);
+    });
+
+    it("should handle concurrent operations from multiple users", async function () {
+      const { vault, user1, user2 } = await loadFixture(deployVaultFixture);
+      const hash1 = ethers.keccak256(ethers.toUtf8Bytes("user1-hash"));
+      const hash2 = ethers.keccak256(ethers.toUtf8Bytes("user2-hash"));
+
+      await vault.lockCollateral(user1.address, hash1, { value: ethers.parseEther("1.0") });
+      await vault.lockCollateral(user2.address, hash2, { value: ethers.parseEther("2.0") });
+
+      await vault.returnCollateral(user1.address, hash1);
+      expect(await vault.collateral(user1.address)).to.equal(0);
+      expect(await vault.collateral(user2.address)).to.equal(ethers.parseEther("2.0"));
+    });
+
+    it("should send slashed collateral to correct treasury address", async function () {
+      const { vault, user1, treasury } = await loadFixture(deployVaultFixture);
+      const hash = ethers.keccak256(ethers.toUtf8Bytes("slash-verify"));
+      const amount = ethers.parseEther("1.5");
+
+      await vault.lockCollateral(user1.address, hash, { value: amount });
+
+      const before = await ethers.provider.getBalance(treasury.address);
+      await vault.slashCollateral(user1.address, hash);
+      const after = await ethers.provider.getBalance(treasury.address);
+
+      expect(after - before).to.equal(amount);
+    });
+
+    it("should track vault balance via receive() correctly", async function () {
+      const { vault, user1 } = await loadFixture(deployVaultFixture);
+      const vaultAddr = await vault.getAddress();
+
+      await user1.sendTransaction({ to: vaultAddr, value: ethers.parseEther("3.0") });
+      await user1.sendTransaction({ to: vaultAddr, value: ethers.parseEther("2.0") });
+
+      expect(await ethers.provider.getBalance(vaultAddr)).to.equal(ethers.parseEther("5.0"));
+    });
+
+    it("should handle maximum collateral values", async function () {
+      const { vault, user1 } = await loadFixture(deployVaultFixture);
+      const hash = ethers.keccak256(ethers.toUtf8Bytes("big-amount"));
+      const bigAmount = ethers.parseEther("1000");
+      await vault.lockCollateral(user1.address, hash, { value: bigAmount });
+      expect(await vault.commitCollateral(hash)).to.equal(bigAmount);
+    });
+
+    it("should not allow double-return of same commitment", async function () {
+      const { vault, user1 } = await loadFixture(deployVaultFixture);
+      const hash = ethers.keccak256(ethers.toUtf8Bytes("double-return"));
+      await vault.lockCollateral(user1.address, hash, { value: ethers.parseEther("1.0") });
+      await vault.returnCollateral(user1.address, hash);
+      await expect(vault.returnCollateral(user1.address, hash))
+        .to.be.revertedWith("ShieldXVault: no collateral to return");
+    });
+
+    it("should return exact collateral amount per commitment", async function () {
+      const { vault, user1 } = await loadFixture(deployVaultFixture);
+      const hash = ethers.keccak256(ethers.toUtf8Bytes("exact-amount"));
+      const precise = ethers.parseEther("1.234567890123456789");
+
+      await vault.lockCollateral(user1.address, hash, { value: precise });
+
+      const before = await ethers.provider.getBalance(user1.address);
+      await vault.returnCollateral(user1.address, hash);
+      const after = await ethers.provider.getBalance(user1.address);
+
+      expect(after - before).to.equal(precise);
     });
   });
 });

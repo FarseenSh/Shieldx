@@ -14,10 +14,11 @@ describe("ShieldXExecutor", function () {
   }
 
   describe("constructor", function () {
-    it("should set deployer as owner and router", async function () {
+    it("should grant deployer all roles", async function () {
       const { executor, deployer } = await loadFixture(deployExecutorFixture);
-      expect(await executor.owner()).to.equal(deployer.address);
-      expect(await executor.router()).to.equal(deployer.address);
+      expect(await executor.hasRole(await executor.DEFAULT_ADMIN_ROLE(), deployer.address)).to.be.true;
+      expect(await executor.hasRole(await executor.ADMIN_ROLE(), deployer.address)).to.be.true;
+      expect(await executor.hasRole(await executor.ROUTER_ROLE(), deployer.address)).to.be.true;
     });
 
     it("should set XCM precompile address", async function () {
@@ -29,17 +30,17 @@ describe("ShieldXExecutor", function () {
   });
 
   describe("setRouter", function () {
-    it("should allow owner to set router", async function () {
+    it("should allow admin to grant ROUTER_ROLE via setRouter", async function () {
       const { executor, user1 } = await loadFixture(deployExecutorFixture);
       await executor.setRouter(user1.address);
-      expect(await executor.router()).to.equal(user1.address);
+      expect(await executor.hasRole(await executor.ROUTER_ROLE(), user1.address)).to.be.true;
     });
 
     it("should revert when non-owner calls setRouter", async function () {
       const { executor, attacker, user1 } = await loadFixture(deployExecutorFixture);
       await expect(
         executor.connect(attacker).setRouter(user1.address)
-      ).to.be.revertedWith("ShieldXExecutor: caller is not the owner");
+      ).to.be.revertedWithCustomError(executor, "AccessControlUnauthorizedAccount");
     });
 
     it("should revert when setting router to zero address", async function () {
@@ -70,7 +71,7 @@ describe("ShieldXExecutor", function () {
       const { executor, attacker } = await loadFixture(deployExecutorFixture);
       await expect(
         executor.connect(attacker).registerParachain(2034, "0x0102030405")
-      ).to.be.revertedWith("ShieldXExecutor: caller is not the owner");
+      ).to.be.revertedWithCustomError(executor, "AccessControlUnauthorizedAccount");
     });
 
     it("should revert when destination is empty", async function () {
@@ -146,7 +147,7 @@ describe("ShieldXExecutor", function () {
       const { executor, attacker, user1 } = await loadFixture(deployExecutorFixture);
       await expect(
         executor.connect(attacker).executeXcmFill(user1.address, ethers.ZeroAddress, ethers.parseEther("10"))
-      ).to.be.revertedWith("ShieldXExecutor: caller is not the router");
+      ).to.be.revertedWithCustomError(executor, "AccessControlUnauthorizedAccount");
     });
   });
 });

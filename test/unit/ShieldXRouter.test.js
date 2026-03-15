@@ -499,4 +499,136 @@ describe("ShieldXRouter", function () {
       expect(epoch.settled).to.be.true;
     });
   });
+
+  describe("edge cases", function () {
+    it("should accept commitOrder with exactly minimum collateral", async function () {
+      const { router, user1 } = await loadFixture(deployFullFixture);
+      const commitHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await expect(router.connect(user1).commitOrder(commitHash, { value: MIN_COLLATERAL }))
+        .to.emit(router, "OrderCommitted");
+    });
+
+    it("should accept commitOrder with 1 wei above minimum collateral", async function () {
+      const { router, user1 } = await loadFixture(deployFullFixture);
+      const commitHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user1).commitOrder(commitHash, { value: MIN_COLLATERAL + 1n });
+      const commitment = await router.commitments(commitHash);
+      expect(commitment.collateral).to.equal(MIN_COLLATERAL + 1n);
+    });
+
+    it("should accept revealOrder at exact start of reveal window", async function () {
+      const { router, user1 } = await loadFixture(deployFullFixture);
+      const commitHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user1).commitOrder(commitHash, { value: COLLATERAL });
+      await time.increase(EPOCH_DURATION + 1);
+      await router.connect(user1).revealOrder(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      const commitment = await router.commitments(commitHash);
+      expect(commitment.revealed).to.be.true;
+    });
+
+    it("should settleEpoch immediately after reveal window closes", async function () {
+      const { router, user1, user2 } = await loadFixture(deployFullFixture);
+      const buyHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      const sellHash = computeCommitHash(SELL, tokenIn, tokenOut, amountIn, minAmountOut, sellPrice, salt2);
+      await router.connect(user1).commitOrder(buyHash, { value: COLLATERAL });
+      await router.connect(user2).commitOrder(sellHash, { value: COLLATERAL });
+      await time.increase(EPOCH_DURATION + 1);
+      await router.connect(user1).revealOrder(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user2).revealOrder(SELL, tokenIn, tokenOut, amountIn, minAmountOut, sellPrice, salt2);
+      await time.increase(REVEAL_WINDOW + 1);
+      await expect(router.settleEpoch(1)).to.emit(router, "EpochSettled");
+    });
+
+    it("should handle 10 concurrent commits from different wallets", async function () {
+      const { router } = await loadFixture(deployFullFixture);
+      const signers = await ethers.getSigners();
+      for (let i = 0; i < 10; i++) {
+        const salt = ethers.keccak256(ethers.toUtf8Bytes(`concurrent-${i}`));
+        const hash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt);
+        await router.connect(signers[i]).commitOrder(hash, { value: COLLATERAL });
+      }
+      expect(await router.getEpochCommitmentCount(1)).to.equal(10);
+    });
+
+    it("should settle epoch with many orders and log gas", async function () {
+      const { router } = await loadFixture(deployFullFixture);
+      const signers = await ethers.getSigners();
+      const hashes = [];
+      // 10 buys + 10 sells = 20 orders
+      for (let i = 0; i < 10; i++) {
+        const bSalt = ethers.keccak256(ethers.toUtf8Bytes(`gas-buy-${i}`));
+        const sSalt = ethers.keccak256(ethers.toUtf8Bytes(`gas-sell-${i}`));
+        const bHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, ethers.parseEther(`${110 - i}`), bSalt);
+        const sHash = computeCommitHash(SELL, tokenIn, tokenOut, amountIn, minAmountOut, ethers.parseEther(`${85 + i}`), sSalt);
+        await router.connect(signers[i]).commitOrder(bHash, { value: COLLATERAL });
+        await router.connect(signers[10 + i]).commitOrder(sHash, { value: COLLATERAL });
+        hashes.push({ type: BUY, price: ethers.parseEther(`${110 - i}`), salt: bSalt, signer: signers[i] });
+        hashes.push({ type: SELL, price: ethers.parseEther(`${85 + i}`), salt: sSalt, signer: signers[10 + i] });
+      }
+      await time.increase(EPOCH_DURATION + 1);
+      for (const h of hashes) {
+        await router.connect(h.signer).revealOrder(h.type, tokenIn, tokenOut, amountIn, minAmountOut, h.price, h.salt);
+      }
+      await time.increase(REVEAL_WINDOW + 1);
+      const tx = await router.settleEpoch(1);
+      const receipt = await tx.wait();
+      expect(receipt.gasUsed).to.be.lt(10_000_000);
+    });
+
+    it("should re-commit to new epoch after previous epoch settled", async function () {
+      const { router, user1, user2 } = await loadFixture(deployFullFixture);
+      const buyHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      const sellHash = computeCommitHash(SELL, tokenIn, tokenOut, amountIn, minAmountOut, sellPrice, salt2);
+      await router.connect(user1).commitOrder(buyHash, { value: COLLATERAL });
+      await router.connect(user2).commitOrder(sellHash, { value: COLLATERAL });
+      await time.increase(EPOCH_DURATION + 1);
+      await router.connect(user1).revealOrder(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user2).revealOrder(SELL, tokenIn, tokenOut, amountIn, minAmountOut, sellPrice, salt2);
+      await time.increase(REVEAL_WINDOW + 1);
+      await router.settleEpoch(1);
+
+      // New epoch — commit again
+      const newHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt3);
+      await router.connect(user1).commitOrder(newHash, { value: COLLATERAL });
+      expect(await router.currentEpochId()).to.equal(2);
+    });
+
+    it("should handle slashUnrevealed when all orders were revealed", async function () {
+      const { router, user1, user2 } = await loadFixture(deployFullFixture);
+      const buyHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      const sellHash = computeCommitHash(SELL, tokenIn, tokenOut, amountIn, minAmountOut, sellPrice, salt2);
+      await router.connect(user1).commitOrder(buyHash, { value: COLLATERAL });
+      await router.connect(user2).commitOrder(sellHash, { value: COLLATERAL });
+      await time.increase(EPOCH_DURATION + 1);
+      await router.connect(user1).revealOrder(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user2).revealOrder(SELL, tokenIn, tokenOut, amountIn, minAmountOut, sellPrice, salt2);
+      await time.increase(REVEAL_WINDOW + 1);
+      // All revealed — slashUnrevealed should not revert, just do nothing
+      await router.slashUnrevealed(1);
+    });
+
+    it("should reject revealOrder after reveal window ends (too late)", async function () {
+      const { router, user1 } = await loadFixture(deployFullFixture);
+      const commitHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user1).commitOrder(commitHash, { value: COLLATERAL });
+      // Skip past reveal window entirely
+      await time.increase(EPOCH_DURATION + REVEAL_WINDOW + 1);
+      await expect(
+        router.connect(user1).revealOrder(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1)
+      ).to.be.revertedWith("ShieldXRouter: not in reveal window");
+    });
+
+    it("should return correct view values mid-epoch", async function () {
+      const { router, user1 } = await loadFixture(deployFullFixture);
+      const commitHash = computeCommitHash(BUY, tokenIn, tokenOut, amountIn, minAmountOut, buyPrice, salt1);
+      await router.connect(user1).commitOrder(commitHash, { value: COLLATERAL });
+
+      expect(await router.isInCommitPhase()).to.be.true;
+      expect(await router.isInRevealPhase()).to.be.false;
+      expect(await router.getEpochCommitmentCount(1)).to.equal(1);
+      const epoch = await router.getCurrentEpoch();
+      expect(epoch.totalCommitments).to.equal(1);
+      expect(epoch.settled).to.be.false;
+    });
+  });
 });

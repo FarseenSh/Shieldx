@@ -699,4 +699,102 @@ mod tests {
         let twap = compute_twap(&prices, &weights);
         assert_eq!(twap, 42);
     }
+
+    // ── Edge Case Tests ──
+
+    #[test]
+    fn test_batch_50_orders() {
+        let mut prices = Vec::new();
+        let mut amounts = Vec::new();
+        let mut is_buy = Vec::new();
+        for i in 0..25 {
+            prices.push(110 - i as u128);
+            amounts.push(10);
+            is_buy.push(true);
+            prices.push(85 + i as u128);
+            amounts.push(10);
+            is_buy.push(false);
+        }
+        let result = compute_batch_auction(&prices, &amounts, &is_buy);
+        assert!(result.clearing_price > 0);
+        assert!(result.fills.iter().any(|&f| f));
+    }
+
+    #[test]
+    fn test_identical_prices_all() {
+        let prices = [100, 100, 100, 100, 100, 100];
+        let amounts = [10, 20, 30, 15, 25, 35];
+        let is_buy = [true, true, true, false, false, false];
+        let result = compute_batch_auction(&prices, &amounts, &is_buy);
+        assert_eq!(result.clearing_price, 100);
+        assert!(result.fills.iter().all(|&f| f));
+    }
+
+    #[test]
+    fn test_one_wei_difference() {
+        let prices = [101, 100];
+        let amounts = [10, 10];
+        let is_buy = [true, false];
+        let result = compute_batch_auction(&prices, &amounts, &is_buy);
+        // (101 + 100) / 2 = 100 (integer division)
+        assert_eq!(result.clearing_price, 100);
+        assert!(result.fills[0]);
+        assert!(result.fills[1]);
+    }
+
+    #[test]
+    fn test_alternating_buy_sell() {
+        let prices = [110, 90, 105, 95];
+        let amounts = [10, 10, 10, 10];
+        let is_buy = [true, false, true, false];
+        let result = compute_batch_auction(&prices, &amounts, &is_buy);
+        assert!(result.clearing_price > 0);
+    }
+
+    #[test]
+    fn test_zero_price() {
+        let prices = [0, 0];
+        let amounts = [10, 10];
+        let is_buy = [true, false];
+        let result = compute_batch_auction(&prices, &amounts, &is_buy);
+        assert_eq!(result.clearing_price, 0);
+    }
+
+    #[test]
+    fn test_zero_amount() {
+        let prices = [100, 90];
+        let amounts = [0, 0];
+        let is_buy = [true, false];
+        let result = compute_batch_auction(&prices, &amounts, &is_buy);
+        assert_eq!(result.clearing_price, 95);
+        assert_eq!(result.fill_amounts[0], 0);
+        assert_eq!(result.fill_amounts[1], 0);
+    }
+
+    #[test]
+    fn test_three_orders_minimum_detection() {
+        // Exactly 3 orders — minimum for manipulation detection
+        let prices = [100, 100, 100];
+        let amounts = [10, 10, 10];
+        let is_buy = [true, false, true];
+        let result = detect_manipulation(&prices, &amounts, &is_buy);
+        // All prices identical → clustered → wash trading
+        assert_eq!(result.score, 70);
+    }
+
+    #[test]
+    fn test_clearing_price_symmetry() {
+        // Same orders in different submission order → same clearing price
+        let prices_a = [110, 100, 90, 95];
+        let amounts_a = [10, 10, 10, 10];
+        let is_buy_a = [true, true, false, false];
+
+        let prices_b = [90, 110, 95, 100];
+        let amounts_b = [10, 10, 10, 10];
+        let is_buy_b = [false, true, false, true];
+
+        let result_a = compute_batch_auction(&prices_a, &amounts_a, &is_buy_a);
+        let result_b = compute_batch_auction(&prices_b, &amounts_b, &is_buy_b);
+        assert_eq!(result_a.clearing_price, result_b.clearing_price);
+    }
 }
