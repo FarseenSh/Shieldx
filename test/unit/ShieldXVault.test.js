@@ -3,6 +3,9 @@ const { ethers } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 
 describe("ShieldXVault", function () {
+  const testHash = ethers.keccak256(ethers.toUtf8Bytes("test-order-1"));
+  const testHash2 = ethers.keccak256(ethers.toUtf8Bytes("test-order-2"));
+
   async function deployVaultFixture() {
     const [deployer, user1, user2, treasury, attacker] = await ethers.getSigners();
     const ShieldXVault = await ethers.getContractFactory("ShieldXVault");
@@ -57,41 +60,44 @@ describe("ShieldXVault", function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("1.0");
 
-      await vault.lockCollateral(user1.address, { value: amount });
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
       expect(await vault.collateral(user1.address)).to.equal(amount);
+      expect(await vault.commitCollateral(testHash)).to.equal(amount);
     });
 
     it("should emit CollateralLocked event", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("1.0");
 
-      await expect(vault.lockCollateral(user1.address, { value: amount }))
+      await expect(vault.lockCollateral(user1.address, testHash, { value: amount }))
         .to.emit(vault, "CollateralLocked")
-        .withArgs(user1.address, amount);
+        .withArgs(user1.address, testHash, amount);
     });
 
-    it("should accumulate collateral for multiple locks", async function () {
+    it("should accumulate total collateral for multiple locks", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount1 = ethers.parseEther("1.0");
       const amount2 = ethers.parseEther("2.0");
 
-      await vault.lockCollateral(user1.address, { value: amount1 });
-      await vault.lockCollateral(user1.address, { value: amount2 });
+      await vault.lockCollateral(user1.address, testHash, { value: amount1 });
+      await vault.lockCollateral(user1.address, testHash2, { value: amount2 });
 
       expect(await vault.collateral(user1.address)).to.equal(amount1 + amount2);
+      expect(await vault.commitCollateral(testHash)).to.equal(amount1);
+      expect(await vault.commitCollateral(testHash2)).to.equal(amount2);
     });
 
     it("should revert when non-router calls lockCollateral", async function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
-        vault.connect(attacker).lockCollateral(user1.address, { value: ethers.parseEther("1.0") })
+        vault.connect(attacker).lockCollateral(user1.address, testHash, { value: ethers.parseEther("1.0") })
       ).to.be.revertedWith("ShieldXVault: caller is not the router");
     });
 
     it("should revert when collateral amount is zero", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       await expect(
-        vault.lockCollateral(user1.address, { value: 0 })
+        vault.lockCollateral(user1.address, testHash, { value: 0 })
       ).to.be.revertedWith("ShieldXVault: collateral amount must be greater than zero");
     });
 
@@ -100,8 +106,8 @@ describe("ShieldXVault", function () {
       const amount1 = ethers.parseEther("1.0");
       const amount2 = ethers.parseEther("3.0");
 
-      await vault.lockCollateral(user1.address, { value: amount1 });
-      await vault.lockCollateral(user2.address, { value: amount2 });
+      await vault.lockCollateral(user1.address, testHash, { value: amount1 });
+      await vault.lockCollateral(user2.address, testHash2, { value: amount2 });
 
       expect(await vault.collateral(user1.address)).to.equal(amount1);
       expect(await vault.collateral(user2.address)).to.equal(amount2);
@@ -109,23 +115,24 @@ describe("ShieldXVault", function () {
   });
 
   describe("returnCollateral", function () {
-    it("should return collateral to user", async function () {
+    it("should return collateral for a specific commitment", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("1.0");
 
-      await vault.lockCollateral(user1.address, { value: amount });
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
 
       const balanceBefore = await ethers.provider.getBalance(user1.address);
-      await vault.returnCollateral(user1.address);
+      await vault.returnCollateral(user1.address, testHash);
       const balanceAfter = await ethers.provider.getBalance(user1.address);
 
       expect(balanceAfter - balanceBefore).to.equal(amount);
     });
 
-    it("should zero out collateral after return", async function () {
+    it("should zero out commit collateral and reduce user total", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
-      await vault.lockCollateral(user1.address, { value: ethers.parseEther("1.0") });
-      await vault.returnCollateral(user1.address);
+      await vault.lockCollateral(user1.address, testHash, { value: ethers.parseEther("1.0") });
+      await vault.returnCollateral(user1.address, testHash);
+      expect(await vault.commitCollateral(testHash)).to.equal(0);
       expect(await vault.collateral(user1.address)).to.equal(0);
     });
 
@@ -133,24 +140,39 @@ describe("ShieldXVault", function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("1.0");
 
-      await vault.lockCollateral(user1.address, { value: amount });
-      await expect(vault.returnCollateral(user1.address))
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
+      await expect(vault.returnCollateral(user1.address, testHash))
         .to.emit(vault, "CollateralReturned")
-        .withArgs(user1.address, amount);
+        .withArgs(user1.address, testHash, amount);
     });
 
-    it("should revert when user has no collateral", async function () {
+    it("should revert when commitment has no collateral", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       await expect(
-        vault.returnCollateral(user1.address)
+        vault.returnCollateral(user1.address, testHash)
       ).to.be.revertedWith("ShieldXVault: no collateral to return");
     });
 
     it("should revert when non-router calls returnCollateral", async function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
-        vault.connect(attacker).returnCollateral(user1.address)
+        vault.connect(attacker).returnCollateral(user1.address, testHash)
       ).to.be.revertedWith("ShieldXVault: caller is not the router");
+    });
+
+    it("should return one commitment while keeping another", async function () {
+      const { vault, user1 } = await loadFixture(deployVaultFixture);
+      const amount1 = ethers.parseEther("1.0");
+      const amount2 = ethers.parseEther("2.0");
+
+      await vault.lockCollateral(user1.address, testHash, { value: amount1 });
+      await vault.lockCollateral(user1.address, testHash2, { value: amount2 });
+
+      await vault.returnCollateral(user1.address, testHash);
+
+      expect(await vault.commitCollateral(testHash)).to.equal(0);
+      expect(await vault.commitCollateral(testHash2)).to.equal(amount2);
+      expect(await vault.collateral(user1.address)).to.equal(amount2);
     });
   });
 
@@ -159,19 +181,20 @@ describe("ShieldXVault", function () {
       const { vault, user1, treasury } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("1.0");
 
-      await vault.lockCollateral(user1.address, { value: amount });
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
 
       const treasuryBefore = await ethers.provider.getBalance(treasury.address);
-      await vault.slashCollateral(user1.address);
+      await vault.slashCollateral(user1.address, testHash);
       const treasuryAfter = await ethers.provider.getBalance(treasury.address);
 
       expect(treasuryAfter - treasuryBefore).to.equal(amount);
     });
 
-    it("should zero out collateral after slash", async function () {
+    it("should zero out commit collateral after slash", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
-      await vault.lockCollateral(user1.address, { value: ethers.parseEther("1.0") });
-      await vault.slashCollateral(user1.address);
+      await vault.lockCollateral(user1.address, testHash, { value: ethers.parseEther("1.0") });
+      await vault.slashCollateral(user1.address, testHash);
+      expect(await vault.commitCollateral(testHash)).to.equal(0);
       expect(await vault.collateral(user1.address)).to.equal(0);
     });
 
@@ -179,24 +202,39 @@ describe("ShieldXVault", function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("1.0");
 
-      await vault.lockCollateral(user1.address, { value: amount });
-      await expect(vault.slashCollateral(user1.address))
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
+      await expect(vault.slashCollateral(user1.address, testHash))
         .to.emit(vault, "CollateralSlashed")
-        .withArgs(user1.address, amount);
+        .withArgs(user1.address, testHash, amount);
     });
 
-    it("should revert when user has no collateral", async function () {
+    it("should revert when commitment has no collateral", async function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       await expect(
-        vault.slashCollateral(user1.address)
+        vault.slashCollateral(user1.address, testHash)
       ).to.be.revertedWith("ShieldXVault: no collateral to slash");
     });
 
     it("should revert when non-router calls slashCollateral", async function () {
       const { vault, attacker, user1 } = await loadFixture(deployVaultFixture);
       await expect(
-        vault.connect(attacker).slashCollateral(user1.address)
+        vault.connect(attacker).slashCollateral(user1.address, testHash)
       ).to.be.revertedWith("ShieldXVault: caller is not the router");
+    });
+
+    it("should slash one commitment while keeping another", async function () {
+      const { vault, user1, treasury } = await loadFixture(deployVaultFixture);
+      const amount1 = ethers.parseEther("1.0");
+      const amount2 = ethers.parseEther("2.0");
+
+      await vault.lockCollateral(user1.address, testHash, { value: amount1 });
+      await vault.lockCollateral(user1.address, testHash2, { value: amount2 });
+
+      await vault.slashCollateral(user1.address, testHash);
+
+      expect(await vault.commitCollateral(testHash)).to.equal(0);
+      expect(await vault.commitCollateral(testHash2)).to.equal(amount2);
+      expect(await vault.collateral(user1.address)).to.equal(amount2);
     });
   });
 
@@ -205,8 +243,7 @@ describe("ShieldXVault", function () {
       const { vault, user1 } = await loadFixture(deployVaultFixture);
       const amount = ethers.parseEther("2.0");
 
-      // Fund vault directly
-      await vault.lockCollateral(user1.address, { value: amount });
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
 
       const balanceBefore = await ethers.provider.getBalance(user1.address);
       await vault.releaseFill(user1.address, ethers.parseEther("1.0"));
@@ -220,7 +257,7 @@ describe("ShieldXVault", function () {
       const amount = ethers.parseEther("2.0");
       const releaseAmount = ethers.parseEther("1.0");
 
-      await vault.lockCollateral(user1.address, { value: amount });
+      await vault.lockCollateral(user1.address, testHash, { value: amount });
       await expect(vault.releaseFill(user1.address, releaseAmount))
         .to.emit(vault, "FillReleased")
         .withArgs(user1.address, releaseAmount);

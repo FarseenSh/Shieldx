@@ -7,7 +7,8 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 /// @notice Collateral vault for ShieldX commit-reveal batch auction protocol
 /// @dev Holds native PAS collateral during commit phase. Only the router can
 ///      lock, return, slash, or release funds. Uses ReentrancyGuard on all
-///      functions that transfer native currency.
+///      functions that transfer native currency. Tracks collateral per-commitment
+///      via commitCollateral mapping for granular return/slash operations.
 contract ShieldXVault is ReentrancyGuard {
     /// @notice Address of the treasury that receives slashed collateral
     address public treasury;
@@ -15,23 +16,29 @@ contract ShieldXVault is ReentrancyGuard {
     /// @notice Address of the authorized router contract
     address public router;
 
-    /// @notice Collateral balance per user address
+    /// @notice Total collateral balance per user address
     mapping(address => uint256) public collateral;
 
-    /// @notice Emitted when collateral is locked for a user
+    /// @notice Collateral amount per commitment hash
+    mapping(bytes32 => uint256) public commitCollateral;
+
+    /// @notice Emitted when collateral is locked for a user's commitment
     /// @param user The address whose collateral was locked
+    /// @param commitHash The commitment hash this collateral is associated with
     /// @param amount The amount of PAS locked (18 decimals)
-    event CollateralLocked(address indexed user, uint256 amount);
+    event CollateralLocked(address indexed user, bytes32 indexed commitHash, uint256 amount);
 
     /// @notice Emitted when collateral is returned to a user
     /// @param user The address receiving the returned collateral
+    /// @param commitHash The commitment hash whose collateral was returned
     /// @param amount The amount of PAS returned (18 decimals)
-    event CollateralReturned(address indexed user, uint256 amount);
+    event CollateralReturned(address indexed user, bytes32 indexed commitHash, uint256 amount);
 
     /// @notice Emitted when collateral is slashed to the treasury
     /// @param user The address whose collateral was slashed
+    /// @param commitHash The commitment hash whose collateral was slashed
     /// @param amount The amount of PAS slashed (18 decimals)
-    event CollateralSlashed(address indexed user, uint256 amount);
+    event CollateralSlashed(address indexed user, bytes32 indexed commitHash, uint256 amount);
 
     /// @notice Emitted when fill proceeds are released to a user
     /// @param user The address receiving the fill proceeds
@@ -61,47 +68,53 @@ contract ShieldXVault is ReentrancyGuard {
         router = _router;
     }
 
-    /// @notice Lock collateral for a user during commit phase
+    /// @notice Lock collateral for a user's commitment during commit phase
     /// @dev Called by router when user commits an order. Requires msg.value > 0.
     /// @param user Address of the user locking collateral
-    function lockCollateral(address user) external payable onlyRouter {
+    /// @param commitHash The commitment hash to associate this collateral with
+    function lockCollateral(address user, bytes32 commitHash) external payable onlyRouter {
         require(msg.value > 0, "ShieldXVault: collateral amount must be greater than zero");
         collateral[user] += msg.value;
-        emit CollateralLocked(user, msg.value);
+        commitCollateral[commitHash] = msg.value;
+        emit CollateralLocked(user, commitHash, msg.value);
     }
 
-    /// @notice Return collateral to a user after successful settlement
+    /// @notice Return collateral for a specific commitment after successful settlement
     /// @dev Uses checks-effects-interactions pattern. Protected by nonReentrant.
     /// @param user Address of the user receiving returned collateral
-    function returnCollateral(address user) external onlyRouter nonReentrant {
-        uint256 amount = collateral[user];
+    /// @param commitHash The commitment hash whose collateral to return
+    function returnCollateral(address user, bytes32 commitHash) external onlyRouter nonReentrant {
+        uint256 amount = commitCollateral[commitHash];
         require(amount > 0, "ShieldXVault: no collateral to return");
 
         // Effects before interactions
-        collateral[user] = 0;
+        commitCollateral[commitHash] = 0;
+        collateral[user] -= amount;
 
         // Interaction
         (bool success, ) = payable(user).call{value: amount}("");
         require(success, "ShieldXVault: collateral return transfer failed");
 
-        emit CollateralReturned(user, amount);
+        emit CollateralReturned(user, commitHash, amount);
     }
 
-    /// @notice Slash a user's collateral to the treasury (penalty for manipulation)
+    /// @notice Slash collateral for a specific commitment to the treasury
     /// @dev Uses checks-effects-interactions pattern. Protected by nonReentrant.
     /// @param user Address of the user being slashed
-    function slashCollateral(address user) external onlyRouter nonReentrant {
-        uint256 amount = collateral[user];
+    /// @param commitHash The commitment hash whose collateral to slash
+    function slashCollateral(address user, bytes32 commitHash) external onlyRouter nonReentrant {
+        uint256 amount = commitCollateral[commitHash];
         require(amount > 0, "ShieldXVault: no collateral to slash");
 
         // Effects before interactions
-        collateral[user] = 0;
+        commitCollateral[commitHash] = 0;
+        collateral[user] -= amount;
 
         // Interaction
         (bool success, ) = payable(treasury).call{value: amount}("");
         require(success, "ShieldXVault: collateral slash transfer failed");
 
-        emit CollateralSlashed(user, amount);
+        emit CollateralSlashed(user, commitHash, amount);
     }
 
     /// @notice Release fill proceeds to a user after execution
