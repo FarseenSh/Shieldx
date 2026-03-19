@@ -3,6 +3,10 @@ const { ethers } = require("hardhat");
 // Update this after deploying to testnet, or pass via ROUTER_ADDRESS env var
 const ROUTER_ADDRESS = process.env.ROUTER_ADDRESS || "0x211eB3d0b75F05A65D6006d7CC5Cf9CC94f6aF7d";
 
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
 async function main() {
   if (!ROUTER_ADDRESS) {
     console.error("Set ROUTER_ADDRESS env var or update the script with the deployed router address.");
@@ -22,9 +26,10 @@ async function main() {
 
   // Connect to deployed router
   const router = await ethers.getContractAt("ShieldXRouter", ROUTER_ADDRESS);
-  const epochDuration = await router.epochDuration();
+  const epochDuration = Number(await router.epochDuration());
+  const revealWindowSec = Number(await router.revealWindow());
   console.log("  Router:", ROUTER_ADDRESS);
-  console.log("  Epoch duration:", epochDuration.toString(), "seconds");
+  console.log("  Epoch duration:", epochDuration, "s | Reveal window:", revealWindowSec, "s");
   console.log("");
 
   // ════════════════════════════════════════════════════════
@@ -60,14 +65,15 @@ async function main() {
   const amount = ethers.parseEther("100");
   const collateral = ethers.parseEther("0.01");
 
-  // Using single deployer account for all roles on testnet
   const attackerBuyPrice = ethers.parseEther("103");
   const attackerSellPrice = ethers.parseEther("97");
   const victimBuyPrice = ethers.parseEther("100");
 
-  const saltAttackerBuy = ethers.keccak256(ethers.toUtf8Bytes("attacker-buy-testnet"));
-  const saltAttackerSell = ethers.keccak256(ethers.toUtf8Bytes("attacker-sell-testnet"));
-  const saltVictim = ethers.keccak256(ethers.toUtf8Bytes("victim-buy-testnet"));
+  // Unique salts per run to avoid "already committed" errors
+  const runId = Date.now().toString();
+  const saltAttackerBuy = ethers.keccak256(ethers.toUtf8Bytes("attacker-buy-" + runId));
+  const saltAttackerSell = ethers.keccak256(ethers.toUtf8Bytes("attacker-sell-" + runId));
+  const saltVictim = ethers.keccak256(ethers.toUtf8Bytes("victim-buy-" + runId));
 
   function commitHash(orderType, price, salt) {
     return ethers.solidityPackedKeccak256(
@@ -80,73 +86,81 @@ async function main() {
   const hashAttackerSell = commitHash(1, attackerSellPrice, saltAttackerSell);
   const hashVictim = commitHash(0, victimBuyPrice, saltVictim);
 
-  // Check current epoch — we might need to settle a stale one first
-  let epoch = await router.getCurrentEpoch();
-  const epochId = epoch.id;
-  console.log("  Current epoch:", epochId.toString(), "status:", epoch.status.toString());
-  console.log("");
-
   // ── COMMIT PHASE ──
+  // commitOrder() calls _advanceEpochIfNeeded() internally, so the first
+  // commit will auto-advance to a fresh epoch if the current one expired.
   console.log("  PHASE 1: COMMIT (orders hidden on-chain)");
   console.log("  ─────────────────────────────────────────");
 
   let tx, receipt;
 
-  tx = await router.commitOrder(hashAttackerBuy, { value: collateral });
+  tx = await router.commitOrder(hashAttackerBuy, { value: collateral, gasLimit: 500000 });
   receipt = await tx.wait();
   console.log("  Attacker commits BUY order  (tx: " + receipt.hash.slice(0, 14) + "...)");
 
-  tx = await router.commitOrder(hashVictim, { value: collateral });
+  // Capture the epoch we committed to (auto-advanced by the contract)
+  const epoch = await router.getCurrentEpoch();
+  const commitEpochId = epoch.id;
+  const epochEndTime = Number(epoch.endTime);
+
+  tx = await router.commitOrder(hashVictim, { value: collateral, gasLimit: 500000 });
   receipt = await tx.wait();
   console.log("  Victim commits BUY order    (tx: " + receipt.hash.slice(0, 14) + "...)");
 
-  tx = await router.commitOrder(hashAttackerSell, { value: collateral });
+  tx = await router.commitOrder(hashAttackerSell, { value: collateral, gasLimit: 500000 });
   receipt = await tx.wait();
   console.log("  Attacker commits SELL order  (tx: " + receipt.hash.slice(0, 14) + "...)");
 
   console.log("");
-  console.log("  >> All 3 orders committed. Order details HIDDEN on-chain.");
+  console.log("  >> All 3 orders committed to epoch " + commitEpochId.toString() + ". Order details HIDDEN on-chain.");
   console.log("  >> Attacker cannot see Victim's order details -- nothing to sandwich!");
   console.log("");
 
-  // ── WAIT FOR EPOCH TO END ──
-  const waitSec = Number(epochDuration) + 5;
-  console.log("  Waiting " + waitSec + "s for commit phase to end...");
-  await new Promise(r => setTimeout(r, waitSec * 1000));
-  console.log("  Epoch commit phase ended.");
+  // ── WAIT FOR REVEAL PHASE ──
+  // Epoch endTime is on-chain. Wait until wall clock passes it + generous buffer
+  // to account for testnet block time drift vs wall clock.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const waitForReveal = Math.max(0, epochEndTime - nowSec) + 10;
+  console.log("  Waiting " + waitForReveal + "s for epoch to end (reveal phase starts)...");
+  await sleep(waitForReveal * 1000);
+  console.log("  Reveal phase open.");
   console.log("");
 
   // ── REVEAL PHASE ──
+  // Use explicit gasLimit to avoid estimation failures on PolkaVM
+  const gasOpts = { gasLimit: 500000 };
+
   console.log("  PHASE 2: REVEAL (epoch ended, orders revealed)");
   console.log("  ─────────────────────────────────────────");
 
-  tx = await router.revealOrder(0, tokenIn, tokenOut, amount, 0, attackerBuyPrice, saltAttackerBuy);
+  tx = await router.revealOrder(0, tokenIn, tokenOut, amount, 0, attackerBuyPrice, saltAttackerBuy, gasOpts);
   receipt = await tx.wait();
   console.log("  Attacker reveals BUY at price 103 (tx: " + receipt.hash.slice(0, 14) + "...)");
 
-  tx = await router.revealOrder(0, tokenIn, tokenOut, amount, 0, victimBuyPrice, saltVictim);
+  tx = await router.revealOrder(0, tokenIn, tokenOut, amount, 0, victimBuyPrice, saltVictim, gasOpts);
   receipt = await tx.wait();
   console.log("  Victim reveals BUY at price 100   (tx: " + receipt.hash.slice(0, 14) + "...)");
 
-  tx = await router.revealOrder(1, tokenIn, tokenOut, amount, 0, attackerSellPrice, saltAttackerSell);
+  tx = await router.revealOrder(1, tokenIn, tokenOut, amount, 0, attackerSellPrice, saltAttackerSell, gasOpts);
   receipt = await tx.wait();
   console.log("  Attacker reveals SELL at price 97  (tx: " + receipt.hash.slice(0, 14) + "...)");
   console.log("");
 
-  // ── WAIT FOR REVEAL WINDOW TO END ──
-  const revealWindow = await router.revealWindow();
-  const revealWait = Number(revealWindow) + 5;
-  console.log("  Waiting " + revealWait + "s for reveal window to end...");
-  await new Promise(r => setTimeout(r, revealWait * 1000));
-  console.log("  Reveal window ended.");
+  // ── WAIT FOR REVEAL WINDOW TO CLOSE ──
+  const revealEndTime = epochEndTime + revealWindowSec;
+  const now2 = Math.floor(Date.now() / 1000);
+  const waitForSettle = Math.max(0, revealEndTime - now2) + 10;
+  console.log("  Waiting " + waitForSettle + "s for reveal window to close...");
+  await sleep(waitForSettle * 1000);
+  console.log("  Reveal window closed. Ready to settle.");
   console.log("");
 
   // ── SETTLE PHASE ──
   console.log("  PHASE 3: SETTLE (batch auction at uniform clearing price)");
   console.log("  ─────────────────────────────────────────");
-  console.log("  Settling at uniform clearing price...");
+  console.log("  Settling epoch " + commitEpochId.toString() + " at uniform clearing price...");
 
-  tx = await router.settleEpoch(epochId);
+  tx = await router.settleEpoch(commitEpochId, { gasLimit: 2000000 });
   receipt = await tx.wait();
 
   // Extract clearing price from EpochSettled event
@@ -162,6 +176,7 @@ async function main() {
     clearingPrice = ethers.formatEther(parsedEvent.args.clearingPrice);
   }
 
+  console.log("  Settlement tx: " + receipt.hash);
   console.log("");
   console.log("  RESULT:");
   console.log("  ─────────────────────────────────────────");
