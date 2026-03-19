@@ -47,6 +47,10 @@ export function useEpoch(provider) {
         } else if (now <= revealEnd) {
           currentPhase = "reveal";
           remaining = Number(revealEnd - now);
+        } else if (currentEpoch.settled) {
+          // Epoch already settled — commitOrder() will auto-advance to a new epoch
+          currentPhase = "commit";
+          remaining = 0;
         } else {
           currentPhase = "settle";
           remaining = 0;
