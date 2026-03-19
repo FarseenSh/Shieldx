@@ -4,6 +4,18 @@
 
 **Built for the Polkadot Solidity Hackathon 2026 — Track 2: PVM Smart Contracts**
 
+**Live Demo:** [shieldx-git-main-itiswhatitis1302-gmailcoms-projects.vercel.app](https://shieldx-git-main-itiswhatitis1302-gmailcoms-projects.vercel.app)
+
+**Deployed on Polkadot Hub TestNet (Chain ID: 420420417):**
+
+| Contract | Address |
+|----------|---------|
+| MockShieldXEngine | [`0x1d20688dc99dBB6A50186AEc68264e8A2c004322`](https://blockscout-testnet.polkadot.io/address/0x1d20688dc99dBB6A50186AEc68264e8A2c004322) |
+| ShieldXVault | [`0x555a1Ac20727A4267Ba51e2AE4be1131f6B0c379`](https://blockscout-testnet.polkadot.io/address/0x555a1Ac20727A4267Ba51e2AE4be1131f6B0c379) |
+| ShieldXSettlement | [`0x4996f8946A727a94ea56d9A0d691b8fdd97a2062`](https://blockscout-testnet.polkadot.io/address/0x4996f8946A727a94ea56d9A0d691b8fdd97a2062) |
+| ShieldXRouter | [`0x211eB3d0b75F05A65D6006d7CC5Cf9CC94f6aF7d`](https://blockscout-testnet.polkadot.io/address/0x211eB3d0b75F05A65D6006d7CC5Cf9CC94f6aF7d) |
+| ShieldXExecutor | [`0xcDd1201F9AC1514e0450A928BEF5111d8809E10c`](https://blockscout-testnet.polkadot.io/address/0xcDd1201F9AC1514e0450A928BEF5111d8809E10c) |
+
 ## The Problem
 
 Every DeFi swap on Polkadot Hub is vulnerable to sandwich attacks and front-running. On Ethereum, MEV extracts $500M+ per year from users. As DeFi grows on Polkadot, this problem follows — and there is **zero protection infrastructure** today.
@@ -96,8 +108,11 @@ npx hardhat test
 # Run Rust PVM contract tests (38 tests)
 cd contracts/precompile && cargo test && cd ../..
 
-# Run sandwich attack demo
+# Run sandwich attack demo (local)
 npx hardhat run scripts/demo-sandwich.js
+
+# Run testnet demo (live on Polkadot Hub TestNet)
+npx hardhat run scripts/demo-testnet.js --network polkadotTestnet
 
 # Deploy to Hardhat local node
 npx hardhat node                                    # Terminal 1
