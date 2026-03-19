@@ -26,7 +26,7 @@ export function useShieldX(signer, currentEpochId) {
         orderType, tokenIn, tokenOut, amountIn, minAmountOut, maxPrice
       );
 
-      const tx = await router.commitOrder(commitHash, { value: collateral });
+      const tx = await router.commitOrder(commitHash, { value: collateral, gasLimit: 500000 });
       const receipt = await tx.wait();
 
       setPendingOrders(prev => [...prev, {
@@ -64,7 +64,8 @@ export function useShieldX(signer, currentEpochId) {
       const { params, salt } = order;
       const tx = await router.revealOrder(
         params.orderType, params.tokenIn, params.tokenOut,
-        params.amountIn, params.minAmountOut, params.maxPrice, salt
+        params.amountIn, params.minAmountOut, params.maxPrice, salt,
+        { gasLimit: 500000 }
       );
       await tx.wait();
 
@@ -96,7 +97,7 @@ export function useShieldX(signer, currentEpochId) {
     setError(null);
 
     try {
-      const tx = await router.settleEpoch(epochId);
+      const tx = await router.settleEpoch(epochId, { gasLimit: 2000000 });
       await tx.wait();
 
       // Mark orders in this epoch as settled

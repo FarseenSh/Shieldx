@@ -42,8 +42,8 @@ export function getAddresses(chainId) {
   return TESTNET_ADDRESSES;
 }
 
-// Default export for backwards compatibility
-export const CONTRACT_ADDRESSES = LOCALHOST_ADDRESSES;
+// Default to testnet for production deployment
+export const CONTRACT_ADDRESSES = TESTNET_ADDRESSES;
 
 export const ROUTER_ABI = [
   "function commitOrder(bytes32 commitHash) payable",
