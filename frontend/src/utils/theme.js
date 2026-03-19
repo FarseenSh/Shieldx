@@ -14,7 +14,7 @@ export function useTheme() {
     borderSubtle: isDark ? "border-gray-800/60" : "border-gray-200",
     text: isDark ? "text-white" : "text-gray-900",
     textSec: isDark ? "text-gray-400" : "text-gray-500",
-    textMuted: isDark ? "text-gray-500" : "text-gray-400",
-    textFaint: isDark ? "text-gray-600" : "text-gray-300",
+    textMuted: isDark ? "text-gray-400" : "text-gray-400",
+    textFaint: isDark ? "text-gray-500" : "text-gray-300",
   };
 }

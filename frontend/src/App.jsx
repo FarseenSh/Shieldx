@@ -3,31 +3,31 @@ import { Header } from "./components/Header.jsx";
 import { EpochTimer } from "./components/EpochTimer.jsx";
 import { OrderPanel } from "./components/OrderPanel.jsx";
 import { BatchVisualizer } from "./components/BatchVisualizer.jsx";
-import { SandwichDemo } from "./components/SandwichDemo.jsx";
 import { EpochHistory } from "./components/EpochHistory.jsx";
 import { Dashboard } from "./components/Dashboard.jsx";
+import { Docs } from "./components/Docs.jsx";
 import { useWallet } from "./hooks/useWallet.js";
 import { useEpoch } from "./hooks/useEpoch.js";
 import { useShieldX } from "./hooks/useShieldX.js";
 import { ThemeContext } from "./utils/theme.js";
 
-const TABS = ["Dashboard", "Trade", "MEV Demo", "History"];
+const NAV_ITEMS = ["Dashboard", "Trade", "History"];
 
 export function App() {
-  const [activeTab, setActiveTab] = useState("Dashboard");
+  const [activePage, setActivePage] = useState("Dashboard");
+  const [showDocs, setShowDocs] = useState(false);
+  const [docsTab, setDocsTab] = useState("Litepaper");
   const [isDark, setIsDark] = useState(true);
   const wallet = useWallet();
   const { epoch, phase, timeRemaining, lastSettled } = useEpoch(wallet.provider);
   const shieldx = useShieldX(wallet.signer, epoch?.id);
 
-  // Auto-reveal when phase changes to "reveal"
   useEffect(() => {
     if (phase === "reveal" && shieldx.pendingOrders.some(o => !o.revealed)) {
       shieldx.autoReveal();
     }
   }, [phase]);
 
-  // Fetch surplus after settlement
   useEffect(() => {
     if (lastSettled && wallet.account) {
       shieldx.fetchSurplus(lastSettled.epochId, wallet.account);
@@ -40,6 +40,12 @@ export function App() {
 
   const pendingCount = shieldx.pendingOrders.filter(o => !o.settled).length;
 
+  function navigate(page) {
+    setActivePage(page);
+    setShowDocs(false);
+    window.scrollTo(0, 0);
+  }
+
   return (
     <ThemeContext.Provider value={isDark}>
     <div className={`min-h-screen ${t.bg} ${t.text} ${t.cls}`}>
@@ -51,32 +57,18 @@ export function App() {
         onDisconnect={wallet.disconnect}
         isDark={isDark}
         onToggleTheme={() => setIsDark(!isDark)}
+        navItems={NAV_ITEMS}
+        activePage={activePage}
+        onNavigate={navigate}
+        onShowDocs={(tab) => { setDocsTab(tab || "Litepaper"); setShowDocs(true); window.scrollTo(0, 0); }}
       />
 
-      {/* Tab navigation */}
-      <nav className={`flex border-b ${t.navBorder} px-4 sm:px-6 overflow-x-auto scrollbar-none`} style={{ WebkitOverflowScrolling: "touch" }}>
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-3 sm:px-4 py-3 text-sm font-medium transition-all duration-150 border-b-2 -mb-px whitespace-nowrap ${
-              activeTab === tab
-                ? `text-emerald-400 border-emerald-500 ${isDark ? "" : "text-emerald-600"}`
-                : `border-transparent hover:opacity-80 ${isDark ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600"}`
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </nav>
-
-      {/* Tab content */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {activeTab === "Dashboard" && (
-          <Dashboard onStartTrading={() => setActiveTab("Trade")} provider={wallet.provider} />
-        )}
-
-        {activeTab === "Trade" && (
+      <main className="max-w-screen-xl mx-auto px-6 sm:px-10 lg:px-16 py-6">
+        {showDocs ? (
+          <Docs initialTab={docsTab} />
+        ) : activePage === "Dashboard" ? (
+          <Dashboard onStartTrading={() => navigate("Trade")} provider={wallet.provider} />
+        ) : activePage === "Trade" ? (
           <div className="space-y-5">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <OrderPanel
@@ -124,18 +116,12 @@ export function App() {
                         {order.status === "committed" && phase === "commit" && (
                           <span className={`text-[11px] ${isDark ? "text-gray-500" : "text-gray-400"}`}>Waiting...</span>
                         )}
-                        {order.status === "committed" && phase === "reveal" && (
+                        {(order.status === "committed" && phase === "reveal") || order.status === "revealing" ? (
                           <span className="text-[11px] text-amber-400 flex items-center gap-1">
                             <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            Auto-revealing...
+                            {order.status === "revealing" ? "Revealing..." : "Auto-revealing..."}
                           </span>
-                        )}
-                        {order.status === "revealing" && (
-                          <span className="text-[11px] text-amber-400 flex items-center gap-1">
-                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            Revealing...
-                          </span>
-                        )}
+                        ) : null}
                         {order.status === "revealed" && (
                           <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17L4 12"/></svg>
@@ -154,23 +140,19 @@ export function App() {
               </div>
             )}
           </div>
-        )}
-
-        {activeTab === "MEV Demo" && <SandwichDemo />}
-
-        {activeTab === "History" && <EpochHistory />}
+        ) : activePage === "History" ? (
+          <EpochHistory />
+        ) : null}
       </main>
 
-      {/* Footer */}
-      <footer className={`border-t ${t.navBorder} py-4 mt-8`}>
-        <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-gray-500">
-          <span>ShieldX Protocol</span>
-          <span>&middot;</span>
-          <a href="https://github.com/FarseenSh/Shieldx" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors">GitHub</a>
-          <span>&middot;</span>
-          <a href="https://blockscout-testnet.polkadot.io/" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-400 transition-colors">Explorer</a>
-          <span>&middot;</span>
-          <span>Polkadot Hackathon 2026 &middot; Track 2</span>
+      <footer className={`border-t ${t.navBorder} py-5 mt-12`}>
+        <div className="max-w-screen-xl mx-auto px-6 sm:px-10 lg:px-16 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p className={`text-[11px] ${isDark ? "text-gray-600" : "text-gray-400"}`}>ShieldX &middot; Polkadot Hackathon 2026</p>
+          <div className={`flex gap-4 text-[11px] ${isDark ? "text-gray-500" : "text-gray-400"}`}>
+            <button onClick={() => { setShowDocs(true); window.scrollTo(0, 0); }} className="hover:text-emerald-500 transition-colors">Docs</button>
+            <a href="https://github.com/FarseenSh/Shieldx" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-500 transition-colors">GitHub</a>
+            <a href="https://blockscout-testnet.polkadot.io/" target="_blank" rel="noopener noreferrer" className="hover:text-emerald-500 transition-colors">Explorer</a>
+          </div>
         </div>
       </footer>
     </div>
