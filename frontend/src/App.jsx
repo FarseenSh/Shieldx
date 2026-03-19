@@ -28,6 +28,13 @@ export function App() {
     }
   }, [phase]);
 
+  // Auto-settle: when epoch is past reveal window and unsettled, settle it
+  useEffect(() => {
+    if (phase === "settle" && epoch && !epoch.settled && wallet.signer) {
+      shieldx.settleEpoch(epoch.id);
+    }
+  }, [phase, epoch?.id, epoch?.settled, wallet.signer]);
+
   useEffect(() => {
     if (lastSettled && wallet.account) {
       shieldx.fetchSurplus(lastSettled.epochId, wallet.account);
