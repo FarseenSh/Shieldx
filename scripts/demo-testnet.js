@@ -149,7 +149,7 @@ async function main() {
   // ── WAIT FOR REVEAL WINDOW TO CLOSE ──
   const revealEndTime = epochEndTime + revealWindowSec;
   const now2 = Math.floor(Date.now() / 1000);
-  const waitForSettle = Math.max(0, revealEndTime - now2) + 10;
+  const waitForSettle = Math.max(0, revealEndTime - now2) + 15;
   console.log("  Waiting " + waitForSettle + "s for reveal window to close...");
   await sleep(waitForSettle * 1000);
   console.log("  Reveal window closed. Ready to settle.");
@@ -160,8 +160,18 @@ async function main() {
   console.log("  ─────────────────────────────────────────");
   console.log("  Settling epoch " + commitEpochId.toString() + " at uniform clearing price...");
 
-  tx = await router.settleEpoch(commitEpochId, { gasLimit: 2000000 });
-  receipt = await tx.wait();
+  // Retry settlement — PolkaVM block.timestamp can lag behind wall clock
+  let settled = false;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      tx = await router.settleEpoch(commitEpochId, { gasLimit: 2000000 });
+      receipt = await tx.wait();
+      if (receipt.status === 1) { settled = true; break; }
+    } catch {}
+    console.log("  Retry " + attempt + "/5 — waiting 10s for block.timestamp to catch up...");
+    await sleep(10000);
+  }
+  if (!settled) { console.error("  Settlement failed after 5 retries"); process.exit(1); }
 
   // Extract clearing price from EpochSettled event
   const settledEvent = receipt.logs.find(log => {
