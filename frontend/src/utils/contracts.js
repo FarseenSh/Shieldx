@@ -17,13 +17,13 @@ export const LOCALHOST_CONFIG = {
   explorer: "",
 };
 
-// Testnet addresses — update after testnet deployment
+// Testnet addresses — deployed to Polkadot Hub TestNet (Chain ID 420420417)
 const TESTNET_ADDRESSES = {
-  router: "0x0000000000000000000000000000000000000000",
-  vault: "0x0000000000000000000000000000000000000000",
-  settlement: "0x0000000000000000000000000000000000000000",
-  engine: "0x0000000000000000000000000000000000000000",
-  executor: "0x0000000000000000000000000000000000000000",
+  engine: "0x1d20688dc99dBB6A50186AEc68264e8A2c004322",
+  vault: "0x555a1Ac20727A4267Ba51e2AE4be1131f6B0c379",
+  settlement: "0x4996f8946A727a94ea56d9A0d691b8fdd97a2062",
+  router: "0x211eB3d0b75F05A65D6006d7CC5Cf9CC94f6aF7d",
+  executor: "0xcDd1201F9AC1514e0450A928BEF5111d8809E10c",
 };
 
 // Localhost addresses — auto-populated by deploy script output
