@@ -13,7 +13,7 @@ export function OrderPanel({ onCommit, isLoading, isConnected, phase, savedAmoun
   const [errors, setErrors] = useState({});
 
   const pair = TOKEN_PAIRS[pairIndex];
-  const disabled = !isConnected || phase !== "commit" || isLoading;
+  const disabled = !isConnected || phase === "reveal" || isLoading;
 
   function validate() {
     const e = {};
@@ -35,10 +35,10 @@ export function OrderPanel({ onCommit, isLoading, isConnected, phase, savedAmoun
 
   return (
     <div className={`rounded-xl p-5 border relative ${bg} ${border}`}>
-      {phase !== "commit" && !lastHash && (
+      {phase === "reveal" && !lastHash && (
         <div className={`absolute inset-0 rounded-xl flex items-center justify-center z-10 ${isDark ? "bg-slate-950/80" : "bg-white/80"}`} style={{ backdropFilter: "blur(2px)" }}>
           <p className={`text-sm font-medium ${isDark ? "text-gray-400" : "text-gray-500"}`}>
-            {phase === "reveal" ? "Reveal window open" : "Settling..."}
+            Reveal window open
           </p>
         </div>
       )}
